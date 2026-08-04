@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/eduardolat/pgbackweb/internal/logger"
 	"github.com/eduardolat/pgbackweb/internal/util/strutil"
 )
 
@@ -72,6 +74,49 @@ func (Client) S3Test(
 	return nil
 }
 
+// abortTimeout bounds the cleanup of a failed multipart upload.
+const abortTimeout = 30 * time.Second
+
+// abortMultipartUpload removes the parts left behind by a failed multipart
+// upload.
+//
+// The SDK already tries this on failure, but it reuses the context the upload
+// was given and discards the result. When the upload failed *because* that
+// context was cancelled — which is how a stalled backup is unwound — the
+// SDK's attempt fails instantly and silently, and the parts already uploaded
+// stay on the bucket, billable, until a lifecycle rule removes them.
+//
+// So the abort is retried here on a context that is deliberately detached from
+// the caller's.
+func abortMultipartUpload(
+	ctx context.Context, s3Client *s3.Client, bucketName, key string,
+	uploadErr error,
+) {
+	// Only a multipart upload leaves anything behind, and only it knows the
+	// upload ID needed to clean up.
+	var failure manager.MultiUploadFailure
+	if !errors.As(uploadErr, &failure) || failure.UploadID() == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), abortTimeout)
+	defer cancel()
+
+	_, err := s3Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(key),
+		UploadId: aws.String(failure.UploadID()),
+	})
+	if err != nil {
+		logger.Error("failed to abort incomplete multipart upload", logger.KV{
+			"bucket":    bucketName,
+			"key":       key,
+			"upload_id": failure.UploadID(),
+			"error":     err.Error(),
+		})
+	}
+}
+
 // S3Upload uploads a file to S3 from a reader.
 //
 // Returns the file size, in bytes.
@@ -101,6 +146,7 @@ func (Client) S3Upload(
 		},
 	)
 	if err != nil {
+		abortMultipartUpload(ctx, s3Client, bucketName, key, err)
 		return 0, fmt.Errorf("failed to upload file to S3: %w", err)
 	}
 

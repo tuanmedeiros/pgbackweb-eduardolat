@@ -98,6 +98,72 @@ func TestAddConnectionParams(t *testing.T) {
 	}
 }
 
+// TestAddConnectionParamsRespectsSpacedDSNAssignments covers libpq's optional
+// whitespace around the equals sign. Missing it would append a second
+// connect_timeout, and libpq keeps the last value of a repeated keyword, so a
+// user's explicit 60s would silently become 10s.
+func TestAddConnectionParamsRespectsSpacedDSNAssignments(t *testing.T) {
+	tests := []struct {
+		name       string
+		connString string
+		absent     string
+		present    string
+	}{
+		{
+			name:       "space before and after equals",
+			connString: "host=db connect_timeout = 60",
+			absent:     "connect_timeout=10",
+			present:    "keepalives=1",
+		},
+		{
+			name:       "space only before equals",
+			connString: "host=db keepalives_idle =300",
+			absent:     "keepalives_idle=30",
+			present:    "keepalives=1",
+		},
+		{
+			name:       "space only after equals",
+			connString: "host=db keepalives= 0",
+			absent:     "keepalives=1",
+			present:    "connect_timeout=10",
+		},
+		{
+			name:       "quoted value containing spaces",
+			connString: "host=db password='a b c' connect_timeout = 90",
+			absent:     "connect_timeout=10",
+			present:    "keepalives=1",
+		},
+		{
+			name:       "escaped quote inside quoted value",
+			connString: `host=db password='a\'b' connect_timeout = 90`,
+			absent:     "connect_timeout=10",
+			present:    "keepalives=1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := addConnectionParams(tt.connString)
+
+			require.NotContains(t, got, tt.absent, "must not override a user value")
+			require.Contains(t, got, tt.present)
+			require.True(t, strings.HasPrefix(got, tt.connString))
+		})
+	}
+}
+
+// TestAddConnectionParamsLeavesMalformedDSNAlone checks that a DSN libpq would
+// reject is handed over untouched, so the real error surfaces.
+func TestAddConnectionParamsLeavesMalformedDSNAlone(t *testing.T) {
+	for _, conn := range []string{
+		"host=db dbname",           // keyword without a value
+		"host=db password='未closed", // unterminated quote
+		"= nokeyword",              // value without a keyword
+	} {
+		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
+	}
+}
+
 // TestAddConnectionParamsDoesNotCorruptCredentials guards the reason this
 // builds the string textually instead of round-tripping through net/url:
 // re-encoding could silently change a password that already works.

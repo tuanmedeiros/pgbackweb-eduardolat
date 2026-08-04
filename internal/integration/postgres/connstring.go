@@ -92,12 +92,13 @@ func addURIParams(connString string) string {
 }
 
 // addDSNParams appends missing parameters to a keyword/value DSN.
+//
+// A malformed DSN is returned untouched: libpq will report the real problem,
+// and appending to something already broken only obscures it.
 func addDSNParams(connString string) string {
-	existing := map[string]bool{}
-	for _, field := range strings.Fields(connString) {
-		if key, _, ok := strings.Cut(field, "="); ok {
-			existing[strings.ToLower(key)] = true
-		}
+	existing, ok := dsnKeys(connString)
+	if !ok {
+		return connString
 	}
 
 	out := connString
@@ -107,4 +108,85 @@ func addDSNParams(connString string) string {
 		}
 	}
 	return out
+}
+
+// dsnKeys returns the keywords set in a libpq keyword/value DSN, reporting
+// false if the string does not parse.
+//
+// This follows libpq's own grammar rather than splitting on whitespace, because
+// libpq allows spaces around the equals sign and quoted values. Reading
+// "host=db connect_timeout = 60" as three whitespace-separated tokens would
+// hide the connect_timeout the user set, and appending a second one would
+// silently win: libpq keeps the last value of a repeated keyword.
+func dsnKeys(connString string) (map[string]bool, bool) {
+	keys := map[string]bool{}
+	runes := []rune(connString)
+	i := 0
+
+	skipSpaces := func() {
+		for i < len(runes) && isSpace(runes[i]) {
+			i++
+		}
+	}
+
+	for {
+		skipSpaces()
+		if i >= len(runes) {
+			return keys, true
+		}
+
+		// Keyword: everything up to a space or the equals sign.
+		start := i
+		for i < len(runes) && !isSpace(runes[i]) && runes[i] != '=' {
+			i++
+		}
+		if i == start {
+			return nil, false // a stray "=" with no keyword
+		}
+		keys[strings.ToLower(string(runes[start:i]))] = true
+
+		skipSpaces()
+		if i >= len(runes) || runes[i] != '=' {
+			return nil, false // keyword without a value
+		}
+		i++ // consume "="
+		skipSpaces()
+
+		if !skipDSNValue(runes, &i) {
+			return nil, false
+		}
+	}
+}
+
+// skipDSNValue advances past a DSN value, which is either single quoted or
+// runs until the next space. A backslash escapes the next character in both
+// forms.
+func skipDSNValue(runes []rune, i *int) bool {
+	if *i < len(runes) && runes[*i] == '\'' {
+		*i++
+		for *i < len(runes) {
+			switch runes[*i] {
+			case '\\':
+				*i += 2
+			case '\'':
+				*i++
+				return true
+			default:
+				*i++
+			}
+		}
+		return false // unterminated quote
+	}
+
+	for *i < len(runes) && !isSpace(runes[*i]) {
+		if runes[*i] == '\\' {
+			*i++
+		}
+		*i++
+	}
+	return true
+}
+
+func isSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\v' || r == '\f'
 }
