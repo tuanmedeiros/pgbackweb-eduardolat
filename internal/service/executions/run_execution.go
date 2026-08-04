@@ -86,7 +86,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 		})
 	}
 
-	err = s.ints.PGClient.Test(pgVersion, back.DecryptedDatabaseConnectionString)
+	err = s.ints.PGClient.Test(ctx, pgVersion, back.DecryptedDatabaseConnectionString)
 	if err != nil {
 		logError(err)
 		return updateExec(dbgen.ExecutionsServiceUpdateExecutionParams{
@@ -98,7 +98,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 	}
 
 	dumpReader := s.ints.PGClient.DumpZip(
-		pgVersion, back.DecryptedDatabaseConnectionString, postgres.DumpParams{
+		ctx, pgVersion, back.DecryptedDatabaseConnectionString, postgres.DumpParams{
 			DataOnly:   back.BackupOptDataOnly,
 			SchemaOnly: back.BackupOptSchemaOnly,
 			Clean:      back.BackupOptClean,
@@ -107,6 +107,10 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 			NoComments: back.BackupOptNoComments,
 		},
 	)
+	// Every early return below (a failed upload, most of all) abandons this
+	// reader mid-stream. Closing it is what stops pg_dump from lingering on the
+	// source database with an idle connection.
+	defer dumpReader.Close()
 
 	date := time.Now().Format(timeutil.LayoutSlashYYYYMMDD)
 	file := fmt.Sprintf(
