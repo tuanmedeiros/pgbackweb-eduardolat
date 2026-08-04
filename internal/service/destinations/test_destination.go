@@ -37,7 +37,7 @@ func (s *Service) TestDestinationAndStoreResult(
 	}
 
 	err = s.TestDestination(
-		dest.DecryptedAccessKey, dest.DecryptedSecretKey, dest.Region,
+		ctx, dest.DecryptedAccessKey, dest.DecryptedSecretKey, dest.Region,
 		dest.Endpoint, dest.BucketName,
 	)
 	if err != nil && dest.TestOk.Valid && dest.TestOk.Bool {
@@ -54,9 +54,12 @@ func (s *Service) TestDestinationAndStoreResult(
 }
 
 func (s *Service) TestDestination(
+	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName string,
 ) error {
-	err := s.ints.StorageClient.S3Test(accessKey, secretKey, region, endpoint, bucketName)
+	err := s.ints.StorageClient.S3Test(
+		ctx, accessKey, secretKey, region, endpoint, bucketName,
+	)
 	if err != nil {
 		return fmt.Errorf("error testing destination: %w", err)
 	}

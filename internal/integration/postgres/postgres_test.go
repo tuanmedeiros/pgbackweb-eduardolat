@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eduardolat/pgbackweb/internal/util/streamutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -229,6 +230,41 @@ func TestDumpZipCloseKillsPgDump(t *testing.T) {
 	require.True(
 		t, waitForExit(pid, 10*time.Second),
 		"closing the zip reader must terminate pg_dump",
+	)
+}
+
+// TestStalledUploadReleasesPgDump reproduces the production incident this fix
+// exists for: the upload to the destination hangs instead of failing, so the
+// backup never returns and pg_dump sits forever on a full pipe, holding a
+// REPEATABLE READ transaction open on the source database.
+//
+// It mirrors how RunExecution wires the pieces together: a cancellable context,
+// a stall guard over the dump, and a deferred Close.
+func TestStalledUploadReleasesPgDump(t *testing.T) {
+	skipWithoutShellTools(t)
+
+	script, pidFile := endlessScript(t)
+	ver := PGVersion{Value: version{Version: "test", PGDump: script}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dumpReader := New().DumpZip(ctx, ver, pidFile)
+	defer dumpReader.Close()
+
+	guarded := streamutil.NewStallReader(dumpReader, 300*time.Millisecond, cancel)
+	defer guarded.Stop()
+
+	// The "uploader" reads a little, then hangs forever without reading again,
+	// exactly like an S3 PUT that stops making progress.
+	consumeSome(t, guarded)
+	pid := readPID(t, pidFile)
+	require.True(t, processAlive(pid), "pg_dump should be running")
+
+	require.True(
+		t, waitForExit(pid, 10*time.Second),
+		"a stalled upload must still release pg_dump, otherwise the source "+
+			"database keeps an idle-in-transaction connection forever",
 	)
 }
 

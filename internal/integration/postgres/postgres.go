@@ -144,7 +144,9 @@ func (Client) Test(
 	ctx, cancel := context.WithTimeout(ctx, testTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, version.Value.PSQL, connString, "-c", "SELECT 1;")
+	cmd := exec.CommandContext(
+		ctx, version.Value.PSQL, addConnectionParams(connString), "-c", "SELECT 1;",
+	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -211,7 +213,7 @@ func (Client) Dump(
 		pickedParams = params[0]
 	}
 
-	args := []string{connString}
+	args := []string{addConnectionParams(connString)}
 	if pickedParams.DataOnly {
 		args = append(args, "--data-only")
 	}
@@ -370,7 +372,9 @@ func (Client) RestoreZip(
 		return fmt.Errorf("dump.sql file not found in ZIP file: %s", zipPath)
 	}
 
-	cmd = exec.CommandContext(ctx, version.Value.PSQL, connString, "-f", dumpPath)
+	cmd = exec.CommandContext(
+		ctx, version.Value.PSQL, addConnectionParams(connString), "-f", dumpPath,
+	)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf(

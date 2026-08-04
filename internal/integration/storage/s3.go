@@ -49,6 +49,7 @@ func createS3Client(
 
 // S3Test tests the connection to S3
 func (Client) S3Test(
+	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName string,
 ) error {
 	s3Client, err := createS3Client(
@@ -59,7 +60,7 @@ func (Client) S3Test(
 	}
 
 	_, err = s3Client.HeadBucket(
-		context.TODO(),
+		ctx,
 		&s3.HeadBucketInput{
 			Bucket: aws.String(bucketName),
 		},
@@ -75,6 +76,7 @@ func (Client) S3Test(
 //
 // Returns the file size, in bytes.
 func (Client) S3Upload(
+	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName, key string,
 	fileReader io.Reader,
 ) (int64, error) {
@@ -90,7 +92,7 @@ func (Client) S3Upload(
 
 	uploader := manager.NewUploader(s3Client)
 	_, err = uploader.Upload(
-		context.TODO(),
+		ctx,
 		&s3.PutObjectInput{
 			Bucket:      aws.String(bucketName),
 			Key:         aws.String(key),
@@ -103,7 +105,7 @@ func (Client) S3Upload(
 	}
 
 	fileHead, err := s3Client.HeadObject(
-		context.TODO(),
+		ctx,
 		&s3.HeadObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
@@ -123,6 +125,7 @@ func (Client) S3Upload(
 
 // S3Delete deletes a file from S3
 func (Client) S3Delete(
+	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName, key string,
 ) error {
 	s3Client, err := createS3Client(
@@ -135,7 +138,7 @@ func (Client) S3Delete(
 	key = strutil.RemoveLeadingSlash(key)
 
 	_, err = s3Client.DeleteObject(
-		context.TODO(),
+		ctx,
 		&s3.DeleteObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),
@@ -150,6 +153,7 @@ func (Client) S3Delete(
 
 // S3GetDownloadLink generates a presigned URL for downloading a file from S3
 func (Client) S3GetDownloadLink(
+	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName, key string,
 	expiration time.Duration,
 ) (string, error) {
@@ -161,7 +165,7 @@ func (Client) S3GetDownloadLink(
 	}
 
 	presigned, err := s3.NewPresignClient(s3Client).PresignGetObject(
-		context.TODO(),
+		ctx,
 		&s3.GetObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String(key),

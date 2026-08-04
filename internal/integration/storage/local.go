@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -17,7 +18,13 @@ const (
 // to the local backups directory.
 //
 // Returns the size of the file created, in bytes.
-func (Client) LocalUpload(relativeFilePath string, fileReader io.Reader) (int64, error) {
+func (Client) LocalUpload(
+	ctx context.Context, relativeFilePath string, fileReader io.Reader,
+) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
 	fullPath := strutil.CreatePath(true, localBackupsDir, relativeFilePath)
 	dir := filepath.Dir(fullPath)
 
