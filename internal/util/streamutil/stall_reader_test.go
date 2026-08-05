@@ -2,6 +2,7 @@ package streamutil
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -104,5 +105,62 @@ func TestStallReaderStopEndsWatchdog(t *testing.T) {
 	s.Stop() // idempotent
 
 	time.Sleep(500 * time.Millisecond)
+	require.False(t, s.Stalled())
+}
+
+// TestStallReaderStopsWatchingAtEOF is the false positive that would break real
+// backups. An S3 uploader buffers roughly 50 MiB (5 MiB parts, concurrency 5,
+// plus a channel of the same depth), so it reads any modest dump to the end long
+// before it finishes transmitting, and then issues no further reads while the
+// queued parts go out.
+//
+// Watching past EOF would cancel those healthy transfers. It is also pointless:
+// EOF means the producer already exited, so nothing remains to protect.
+func TestStallReaderStopsWatchingAtEOF(t *testing.T) {
+	src := bytes.NewReader([]byte("a whole small dump"))
+
+	stalled := make(chan struct{})
+	s := NewStallReader(src, 100*time.Millisecond, func() { close(stalled) })
+	defer s.Stop()
+
+	out, err := io.ReadAll(s) // drains to EOF, like the uploader buffering
+	require.NoError(t, err)
+	require.Equal(t, "a whole small dump", string(out))
+
+	// Now spend far longer than the timeout "transmitting" without reading.
+	select {
+	case <-stalled:
+		t.Fatal("a finished stream must not be reported as stalled")
+	case <-time.After(1 * time.Second):
+	}
+
+	require.False(t, s.Stalled())
+}
+
+// errReader fails after its first read, standing in for a dump that dies.
+type errReader struct{ reads int }
+
+func (r *errReader) Read(p []byte) (int, error) {
+	r.reads++
+	if r.reads == 1 {
+		p[0] = 'x'
+		return 1, nil
+	}
+	return 0, errors.New("pg_dump failed")
+}
+
+// TestStallReaderStopsWatchingAfterError applies the same reasoning to a failed
+// dump: the error is already travelling to the caller, so the watchdog has
+// nothing left to add.
+func TestStallReaderStopsWatchingAfterError(t *testing.T) {
+	s := NewStallReader(&errReader{}, 100*time.Millisecond, func() {
+		t.Error("a failed stream must not also be reported as stalled")
+	})
+	defer s.Stop()
+
+	_, err := io.ReadAll(s)
+	require.ErrorContains(t, err, "pg_dump failed")
+
+	time.Sleep(1 * time.Second)
 	require.False(t, s.Stalled())
 }

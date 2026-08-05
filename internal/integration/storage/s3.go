@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -34,12 +36,24 @@ func createS3Client(
 		}, nil
 	})
 
+	// The SDK bounds connecting and the TLS handshake, but nothing after that:
+	// a destination that accepts the upload and then never answers would hang
+	// forever. This bounds only the wait for response headers, which starts
+	// once the request body has been sent, so a slow but progressing upload is
+	// unaffected however long it takes.
+	httpClient := awshttp.NewBuildableClient().WithTransportOptions(
+		func(tr *http.Transport) {
+			tr.ResponseHeaderTimeout = responseHeaderTimeout
+		},
+	)
+
 	//nolint:all
 	conf, err := config.LoadDefaultConfig(
 		context.TODO(),
 		config.WithRegion(region),
 		config.WithEndpointResolver(endpointResolver),
 		config.WithCredentialsProvider(credentialsProvider),
+		config.WithHTTPClient(httpClient),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing storage config: %w", err)
@@ -74,8 +88,15 @@ func (Client) S3Test(
 	return nil
 }
 
-// abortTimeout bounds the cleanup of a failed multipart upload.
-const abortTimeout = 30 * time.Second
+const (
+	// abortTimeout bounds the cleanup of a failed multipart upload.
+	abortTimeout = 30 * time.Second
+
+	// responseHeaderTimeout bounds how long a destination may take to start
+	// answering once a request body has been sent. It is generous because
+	// completing a large multipart upload legitimately takes a while.
+	responseHeaderTimeout = 5 * time.Minute
+)
 
 // abortMultipartUpload removes the parts left behind by a failed multipart
 // upload.

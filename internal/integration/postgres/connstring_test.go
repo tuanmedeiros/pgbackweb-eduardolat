@@ -338,3 +338,38 @@ func TestAddConnectionParamsLeavesMalformedURIAlone(t *testing.T) {
 		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
 	}
 }
+
+// TestAddConnectionParamsPreservesEscapedTrailingSpace covers a DSN value whose
+// trailing space is backslash-escaped, which libpq accepts as part of the value.
+//
+// Trimming the string before appending would drop the space but keep the
+// backslash, so the backslash would then escape the separator added after it and
+// libpq would read the appended parameters as part of the password. Credentials
+// would change and every connection would fail.
+func TestAddConnectionParamsPreservesEscapedTrailingSpace(t *testing.T) {
+	conn := `host=db password=secret\ `
+
+	got := addConnectionParams(conn)
+
+	// The original must survive byte for byte, escape and space included.
+	require.True(t, strings.HasPrefix(got, conn), "got %q", got)
+	require.Contains(t, got, "connect_timeout=10")
+
+	// The password ends at the separator, so what follows is a real parameter
+	// rather than more password.
+	require.Contains(t, got, `secret\  connect_timeout=10`)
+}
+
+// TestAddConnectionParamsPreservesSurroundingWhitespace checks the same
+// principle for ordinary padding: nothing is silently rewritten.
+func TestAddConnectionParamsPreservesSurroundingWhitespace(t *testing.T) {
+	for _, conn := range []string{
+		"  host=db dbname=mydb",
+		"host=db dbname=mydb  ",
+		"\thost=db\t",
+	} {
+		got := addConnectionParams(conn)
+		require.True(t, strings.HasPrefix(got, conn), "conn=%q got=%q", conn, got)
+		require.Contains(t, got, "keepalives=1")
+	}
+}

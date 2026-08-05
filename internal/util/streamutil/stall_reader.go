@@ -16,9 +16,19 @@ import (
 // source database. Nothing downstream ever returns, so no amount of deferred
 // cleanup runs.
 //
-// A stall means "the consumer is not asking for data". A consumer that is
-// blocked *inside* Read is waiting on the producer instead, which is a slow
-// dump rather than a stuck upload, and is deliberately not treated as a stall.
+// A stall means "the consumer is not asking for data". Two cases look like that
+// without being one, and neither is treated as a stall:
+//
+//   - A consumer blocked *inside* Read is waiting on the producer, which is a
+//     slow dump rather than a stuck upload.
+//   - A consumer that has read to the end has nothing left to ask for. Watching
+//     past that point is not just useless but harmful: an S3 uploader buffers
+//     tens of megabytes, so it reaches the end of a modest dump long before it
+//     finishes transmitting, and cancelling then would kill a healthy backup.
+//
+// The second case is also why watching can stop at the end of the stream: once
+// the producer has signalled EOF it has exited, so the resources this exists to
+// protect are already released.
 type StallReader struct {
 	reader  io.Reader
 	timeout time.Duration
@@ -115,6 +125,13 @@ func (s *StallReader) Read(p []byte) (int, error) {
 
 	if stalled {
 		return 0, s.err()
+	}
+
+	// The stream is finished, so the producer is gone and there is nothing left
+	// to guard. Stopping here is what keeps a long, healthy transfer of what
+	// was already buffered from being mistaken for a stall.
+	if err != nil {
+		s.Stop()
 	}
 	return n, err
 }

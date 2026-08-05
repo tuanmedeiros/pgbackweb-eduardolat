@@ -75,19 +75,25 @@ func isEnvSet(name string) bool {
 //
 // Anything else — a bare database name, an empty string — is returned
 // unchanged, because appending to it would produce something libpq rejects.
+//
+// The trimmed copy is used only to recognise the format. What gets appended to
+// is always the original: in a DSN a backslash can escape a trailing space, as
+// in "password=secret\ ", and trimming would drop the space while keeping the
+// backslash, leaving it to escape the separator added after it and swallow the
+// appended parameters into the password.
 func addConnectionParams(connString string) string {
 	trimmed := strings.TrimSpace(connString)
 
 	lower := strings.ToLower(trimmed)
 	if strings.HasPrefix(lower, "postgres://") ||
 		strings.HasPrefix(lower, "postgresql://") {
-		return addURIParams(trimmed)
+		return addURIParams(connString)
 	}
 
 	// A keyword/value DSN is only recognisable by containing a "=". A bare
 	// dbname must be left alone: "mydb keepalives=1" is not valid libpq input.
 	if strings.Contains(trimmed, "=") {
-		return addDSNParams(trimmed)
+		return addDSNParams(connString)
 	}
 
 	return connString
