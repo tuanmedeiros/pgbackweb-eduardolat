@@ -264,3 +264,77 @@ func TestAddConnectionParamsIsIdempotent(t *testing.T) {
 		require.Equal(t, once, addConnectionParams(once), "conn=%q", conn)
 	}
 }
+
+// TestAddConnectionParamsDecodesURIKeys covers percent-encoded parameter names.
+//
+// libpq decodes the name as well as the value, so "connect%5ftimeout" is
+// connect_timeout. Matching on the raw text would miss it and append a second
+// connect_timeout, and the last duplicate wins.
+func TestAddConnectionParamsDecodesURIKeys(t *testing.T) {
+	tests := []struct {
+		name       string
+		connString string
+		absent     string
+		present    string
+	}{
+		{
+			name:       "encoded underscore in connect_timeout",
+			connString: "postgres://host/db?connect%5ftimeout=60",
+			absent:     "connect_timeout=10",
+			present:    "keepalives=1",
+		},
+		{
+			name:       "encoded letter in keepalives_idle",
+			connString: "postgres://host/db?k%65epalives_idle=300",
+			absent:     "keepalives_idle=30",
+			present:    "keepalives=1",
+		},
+		{
+			name:       "uppercase hex digits decode too",
+			connString: "postgres://host/db?connect%5Ftimeout=60",
+			absent:     "connect_timeout=10",
+			present:    "keepalives=1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := addConnectionParams(tt.connString)
+
+			require.NotContains(t, got, tt.absent, "must not override a user value")
+			require.Contains(t, got, tt.present)
+			require.True(t, strings.HasPrefix(got, tt.connString))
+		})
+	}
+}
+
+// TestAddConnectionParamsDecodesEncodedServiceKey is the same trap reaching the
+// service file: an encoded "service" key must still suppress injection entirely.
+func TestAddConnectionParamsDecodesEncodedServiceKey(t *testing.T) {
+	for _, conn := range []string{
+		"postgres://host/db?s%65rvice=production",
+		"postgres://host/db?sslmode=require&servic%65=production",
+	} {
+		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
+	}
+}
+
+// TestAddConnectionParamsTreatsPlusLiterally guards the decoder choice: libpq
+// decodes %XX only, so "+" is a literal plus and never a space.
+func TestAddConnectionParamsTreatsPlusLiterally(t *testing.T) {
+	// "connect+timeout" is not connect_timeout for libpq, so the default still
+	// applies.
+	got := addConnectionParams("postgres://host/db?connect+timeout=60")
+	require.Contains(t, got, "connect_timeout=10")
+}
+
+// TestAddConnectionParamsLeavesMalformedURIAlone checks that a query libpq
+// would reject is handed over untouched, so the real error surfaces.
+func TestAddConnectionParamsLeavesMalformedURIAlone(t *testing.T) {
+	for _, conn := range []string{
+		"postgres://host/db?connect%zztimeout=60", // invalid percent token
+		"postgres://host/db?noseparator",          // missing "="
+	} {
+		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
+	}
+}

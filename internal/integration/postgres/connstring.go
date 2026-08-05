@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"net/url"
 	"os"
 	"strings"
 )
@@ -110,11 +111,9 @@ func addURIParams(connString string) string {
 		base, fragment = b, "#"+f
 	}
 
-	existing := map[string]bool{}
-	for _, pair := range strings.Split(query, "&") {
-		if key, _, ok := strings.Cut(pair, "="); ok {
-			existing[strings.ToLower(strings.TrimSpace(key))] = true
-		}
+	existing, ok := uriQueryKeys(query)
+	if !ok {
+		return connString
 	}
 
 	additions := []string{}
@@ -129,6 +128,43 @@ func addURIParams(connString string) string {
 		return base + "?" + query + "&" + strings.Join(additions, "&") + fragment
 	}
 	return base + "?" + strings.Join(additions, "&") + fragment
+}
+
+// uriQueryKeys returns the parameter names set in a URI query, reporting false
+// if the query is not something libpq would accept.
+//
+// libpq percent-decodes the parameter *name* as well as its value — "At this
+// point both keyword and value are not URI-encoded" (fe-connect.c) — so
+// "?connect%5ftimeout=60" sets connect_timeout. Comparing the raw text would
+// miss that and append a second connect_timeout, which wins, silently replacing
+// the value the user chose.
+func uriQueryKeys(query string) (map[string]bool, bool) {
+	keys := map[string]bool{}
+	if query == "" {
+		return keys, true
+	}
+
+	for _, pair := range strings.Split(query, "&") {
+		if pair == "" {
+			continue
+		}
+
+		raw, _, found := strings.Cut(pair, "=")
+		if !found {
+			return nil, false // libpq: "missing key/value separator"
+		}
+
+		// PathUnescape rather than QueryUnescape: libpq decodes %XX only, and
+		// leaves "+" as a literal plus rather than a space.
+		key, err := url.PathUnescape(raw)
+		if err != nil {
+			return nil, false // libpq: "invalid percent-encoded token"
+		}
+
+		keys[strings.ToLower(strings.TrimSpace(key))] = true
+	}
+
+	return keys, true
 }
 
 // addDSNParams appends missing parameters to a keyword/value DSN.
