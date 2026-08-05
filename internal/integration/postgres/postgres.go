@@ -3,10 +3,14 @@ package postgres
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"sync"
+	"time"
 
 	"github.com/eduardolat/pgbackweb/internal/util/strutil"
 	"github.com/orsinium-labs/enum"
@@ -64,10 +68,49 @@ var (
 	PGVersionsDesc = []PGVersion{PG18, PG17, PG16, PG15, PG14, PG13}
 )
 
+// testTimeout bounds the psql connectivity check. Without it, a host that
+// silently drops packets keeps a psql process alive for as long as the TCP
+// keepalives take to notice (hours), and every one of those processes holds a
+// connection open on the target database.
+//
+// It is deliberately generous: exceeding it marks the database unhealthy and
+// fails the backup, so it must only ever catch a truly stuck connection.
+const testTimeout = 60 * time.Second
+
 type Client struct{}
 
 func New() *Client {
 	return &Client{}
+}
+
+// cmdReader is an io.ReadCloser fed by an OS process through an io.Pipe. Its
+// Close releases that process.
+//
+// This matters because io.Pipe writes block until someone reads: if the
+// consumer walks away before EOF, the process stays blocked writing forever
+// and never releases its connection to the database.
+type cmdReader struct {
+	reader  *io.PipeReader
+	release func()
+	once    sync.Once
+}
+
+func newCmdReader(reader *io.PipeReader, release func()) *cmdReader {
+	return &cmdReader{reader: reader, release: release}
+}
+
+func (r *cmdReader) Read(p []byte) (int, error) {
+	return r.reader.Read(p)
+}
+
+// Close unblocks the writing side and then releases the process behind it.
+// It is safe to call more than once, and safe to call after reaching EOF.
+func (r *cmdReader) Close() error {
+	r.once.Do(func() {
+		_ = r.reader.Close()
+		r.release()
+	})
+	return nil
 }
 
 // ParseVersion returns the PGVersion enum member for the given PostgreSQL
@@ -91,11 +134,27 @@ func (Client) ParseVersion(version string) (PGVersion, error) {
 	}
 }
 
-// Test tests the connection to the PostgreSQL database
-func (Client) Test(version PGVersion, connString string) error {
-	cmd := exec.Command(version.Value.PSQL, connString, "-c", "SELECT 1;")
+// Test tests the connection to the PostgreSQL database.
+//
+// The check is bounded by testTimeout so an unreachable host cannot leave a
+// psql process (and the connection it holds) running indefinitely.
+func (Client) Test(
+	ctx context.Context, version PGVersion, connString string,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, testTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(
+		ctx, version.Value.PSQL, connString, "-c", "SELECT 1;",
+	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf(
+				"timeout after %s running psql test v%s: %s",
+				testTimeout, version.Value.Version, output,
+			)
+		}
 		return fmt.Errorf(
 			"error running psql test v%s: %s",
 			version.Value.Version, output,
@@ -138,10 +197,17 @@ type DumpParams struct {
 }
 
 // Dump runs the pg_dump command with the given parameters. It returns the SQL
-// dump as an io.Reader.
+// dump as an io.ReadCloser.
+//
+// The caller MUST close the returned reader. pg_dump holds an open transaction
+// on the source database for its whole run, so a reader that is abandoned
+// before EOF (an upload that failed halfway, for example) would otherwise
+// leave pg_dump blocked on a full pipe and its connection stuck in
+// "idle in transaction" until the database is restarted.
 func (Client) Dump(
-	version PGVersion, connString string, params ...DumpParams,
-) io.Reader {
+	ctx context.Context, version PGVersion, connString string,
+	params ...DumpParams,
+) io.ReadCloser {
 	pickedParams := DumpParams{}
 	if len(params) > 0 {
 		pickedParams = params[0]
@@ -167,38 +233,69 @@ func (Client) Dump(
 		args = append(args, "--no-comments")
 	}
 
+	return streamCmdStdout(
+		ctx, version.Value.PGDump, args,
+		fmt.Sprintf("error running pg_dump v%s", version.Value.Version),
+	)
+}
+
+// streamCmdStdout runs a command and exposes its stdout as an io.ReadCloser.
+//
+// Closing the returned reader terminates the process. This is the whole point:
+// stdout is delivered through an io.Pipe, whose writes block until someone
+// reads, so a process whose output stops being consumed would otherwise hang
+// forever holding whatever resources it opened.
+func streamCmdStdout(
+	ctx context.Context, path string, args []string, errPrefix string,
+) io.ReadCloser {
+	ctx, cancel := context.WithCancel(ctx)
+
 	errorBuffer := &bytes.Buffer{}
 	reader, writer := io.Pipe()
-	cmd := exec.Command(version.Value.PGDump, args...)
+
+	// cmd.WaitDelay is deliberately left unset: it would also bound the time
+	// Wait spends draining output after the process exits, which on a slow
+	// upload would truncate the tail of a perfectly good dump.
+	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Stdout = writer
 	cmd.Stderr = errorBuffer
 
 	go func() {
-		defer writer.Close()
+		// Reaching here means the process has exited, so this only releases
+		// the context. Killing a still-running process is Close's job.
+		defer cancel()
+
 		if err := cmd.Run(); err != nil {
 			writer.CloseWithError(fmt.Errorf(
-				"error running pg_dump v%s: %s",
-				version.Value.Version, errorBuffer.String(),
+				"%s: %s", errPrefix, errorBuffer.String(),
 			))
+			return
 		}
+		writer.Close()
 	}()
 
-	return reader
+	return newCmdReader(reader, cancel)
 }
 
 // DumpZip runs the pg_dump command with the given parameters and returns the
-// ZIP-compressed SQL dump as an io.Reader.
+// ZIP-compressed SQL dump as an io.ReadCloser.
+//
+// As with Dump, the caller MUST close the returned reader to release the
+// underlying pg_dump process and its connection to the source database.
 func (c *Client) DumpZip(
-	version PGVersion, connString string, params ...DumpParams,
-) io.Reader {
-	dumpReader := c.Dump(version, connString, params...)
+	ctx context.Context, version PGVersion, connString string,
+	params ...DumpParams,
+) io.ReadCloser {
+	dumpReader := c.Dump(ctx, version, connString, params...)
 	reader, writer := io.Pipe()
 
 	go func() {
-		defer writer.Close()
+		// Whatever happens below, pg_dump must be released. Without this, a zip
+		// step that stops early leaves pg_dump blocked writing into a pipe
+		// nobody reads.
+		defer dumpReader.Close()
 
 		zipWriter := zip.NewWriter(writer)
-		defer zipWriter.Close()
 
 		fileWriter, err := zipWriter.Create("dump.sql")
 		if err != nil {
@@ -210,9 +307,18 @@ func (c *Client) DumpZip(
 			writer.CloseWithError(fmt.Errorf("error writing to zip file: %w", err))
 			return
 		}
+
+		// Closing the zip writer flushes the central directory; skipping this
+		// error would produce a truncated archive reported as a success.
+		if err := zipWriter.Close(); err != nil {
+			writer.CloseWithError(fmt.Errorf("error closing zip file: %w", err))
+			return
+		}
+
+		writer.Close()
 	}()
 
-	return reader
+	return newCmdReader(reader, func() { _ = dumpReader.Close() })
 }
 
 // RestoreZip downloads or copies the ZIP from the given url or path, unzips it,
@@ -225,7 +331,8 @@ func (c *Client) DumpZip(
 //   - isLocal: whether the ZIP file is local or a URL
 //   - zipURLOrPath: URL or path to the ZIP file
 func (Client) RestoreZip(
-	version PGVersion, connString string, isLocal bool, zipURLOrPath string,
+	ctx context.Context, version PGVersion, connString string,
+	isLocal bool, zipURLOrPath string,
 ) error {
 	workDir, err := os.MkdirTemp("", "pbw-restore-*")
 	if err != nil {
@@ -236,7 +343,7 @@ func (Client) RestoreZip(
 	dumpPath := strutil.CreatePath(true, workDir, "dump.sql")
 
 	if isLocal {
-		cmd := exec.Command("cp", zipURLOrPath, zipPath)
+		cmd := exec.CommandContext(ctx, "cp", zipURLOrPath, zipPath)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("error copying ZIP file to temp dir: %s", output)
@@ -244,7 +351,7 @@ func (Client) RestoreZip(
 	}
 
 	if !isLocal {
-		cmd := exec.Command("wget", "--no-verbose", "-O", zipPath, zipURLOrPath)
+		cmd := exec.CommandContext(ctx, "wget", "--no-verbose", "-O", zipPath, zipURLOrPath)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("error downloading ZIP file: %s", output)
@@ -255,7 +362,7 @@ func (Client) RestoreZip(
 		return fmt.Errorf("zip file not found: %s", zipPath)
 	}
 
-	cmd := exec.Command("unzip", "-o", zipPath, "dump.sql", "-d", workDir)
+	cmd := exec.CommandContext(ctx, "unzip", "-o", zipPath, "dump.sql", "-d", workDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("error unzipping ZIP file: %s", output)
@@ -265,7 +372,9 @@ func (Client) RestoreZip(
 		return fmt.Errorf("dump.sql file not found in ZIP file: %s", zipPath)
 	}
 
-	cmd = exec.Command(version.Value.PSQL, connString, "-f", dumpPath)
+	cmd = exec.CommandContext(
+		ctx, version.Value.PSQL, connString, "-f", dumpPath,
+	)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf(

@@ -10,7 +10,7 @@ func (s *Service) CreateDestination(
 	ctx context.Context, params dbgen.DestinationsServiceCreateDestinationParams,
 ) (dbgen.Destination, error) {
 	err := s.TestDestination(
-		params.AccessKey, params.SecretKey, params.Region, params.Endpoint,
+		ctx, params.AccessKey, params.SecretKey, params.Region, params.Endpoint,
 		params.BucketName,
 	)
 	if err != nil {
