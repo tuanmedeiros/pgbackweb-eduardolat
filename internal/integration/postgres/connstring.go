@@ -104,18 +104,15 @@ func addConnectionParams(connString string) string {
 // It edits the query textually instead of round-tripping through net/url, so
 // that credentials and host are handed to libpq byte for byte as the user
 // wrote them.
+//
+// Note that "#" gets no special treatment. libpq has no notion of a URI
+// fragment — it scans the database name up to "?" and a query value up to "&",
+// so a "#" is simply part of whichever it lands in. Splitting a "fragment" off
+// and moving it to the end would change the database name and append the
+// remainder to the last injected value, turning "keepalives_count=5" into
+// "keepalives_count=5#archive", which psql rejects as an invalid integer.
 func addURIParams(connString string) string {
-	base, query, hasQuery := strings.Cut(connString, "?")
-
-	// A URI may carry a #fragment; libpq ignores it, but keep it at the end.
-	fragment := ""
-	if hasQuery {
-		if q, f, ok := strings.Cut(query, "#"); ok {
-			query, fragment = q, "#"+f
-		}
-	} else if b, f, ok := strings.Cut(base, "#"); ok {
-		base, fragment = b, "#"+f
-	}
+	base, query, _ := strings.Cut(connString, "?")
 
 	existing, ok := uriQueryKeys(query)
 	if !ok {
@@ -131,9 +128,9 @@ func addURIParams(connString string) string {
 	}
 
 	if query != "" {
-		return base + "?" + query + "&" + strings.Join(additions, "&") + fragment
+		return base + "?" + query + "&" + strings.Join(additions, "&")
 	}
-	return base + "?" + strings.Join(additions, "&") + fragment
+	return base + "?" + strings.Join(additions, "&")
 }
 
 // uriQueryKeys returns the parameter names set in a URI query, reporting false
@@ -175,8 +172,10 @@ func uriQueryKeys(query string) (map[string]bool, bool) {
 
 // addDSNParams appends missing parameters to a keyword/value DSN.
 //
-// A malformed DSN is returned untouched: libpq will report the real problem,
-// and appending to something already broken only obscures it.
+// A DSN that cannot be safely extended is returned untouched, whether it is
+// malformed — libpq will report the real problem, and appending to something
+// already broken only obscures it — or valid but ending in a way that would
+// capture whatever follows.
 func addDSNParams(connString string) string {
 	existing, ok := dsnKeys(connString)
 	if !ok {
@@ -191,7 +190,7 @@ func addDSNParams(connString string) string {
 }
 
 // dsnKeys returns the keywords set in a libpq keyword/value DSN, reporting
-// false if the string does not parse.
+// false if the string does not parse or cannot be safely extended.
 //
 // This follows libpq's own grammar rather than splitting on whitespace, because
 // libpq allows spaces around the equals sign and quoted values. Reading
@@ -241,6 +240,9 @@ func dsnKeys(connString string) (map[string]bool, bool) {
 // skipDSNValue advances past a DSN value, which is either single quoted or
 // runs until the next space. A backslash escapes the next character in both
 // forms.
+//
+// It reports false when the value cannot be safely extended, which covers an
+// unterminated quote and a value ending in a dangling backslash.
 func skipDSNValue(runes []rune, i *int) bool {
 	if *i < len(runes) && runes[*i] == '\'' {
 		*i++
@@ -261,6 +263,14 @@ func skipDSNValue(runes []rune, i *int) bool {
 	for *i < len(runes) && !isSpace(runes[*i]) {
 		if runes[*i] == '\\' {
 			*i++
+
+			// A backslash at the very end of the string escapes nothing, and
+			// libpq quietly drops it. Appending would hand it the separator to
+			// escape instead, so "password=secret\" would silently become the
+			// password "secret connect_timeout=10" and swallow the parameter.
+			if *i >= len(runes) {
+				return false
+			}
 		}
 		*i++
 	}

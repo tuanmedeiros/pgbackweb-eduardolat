@@ -239,15 +239,34 @@ func TestAddConnectionParamsDoesNotCorruptCredentials(t *testing.T) {
 	require.Contains(t, got, "keepalives=1")
 }
 
-// TestAddConnectionParamsKeepsFragment checks a URI fragment stays at the end,
-// where libpq expects to be able to ignore it.
-func TestAddConnectionParamsKeepsFragment(t *testing.T) {
-	require.True(
-		t, strings.HasSuffix(addConnectionParams("postgres://h/db#frag"), "#frag"),
-	)
-	require.True(
-		t, strings.HasSuffix(addConnectionParams("postgres://h/db?a=b#frag"), "#frag"),
-	)
+// TestAddConnectionParamsDoesNotTreatHashAsFragment covers a URI containing an
+// unescaped "#".
+//
+// libpq has no notion of a fragment: it scans the database name up to "?" and a
+// query value up to "&", so the "#" belongs to whichever it falls in. Splitting
+// it off and moving it to the end would both change the database name and leave
+// it glued to the last injected value, giving "keepalives_count=5#archive" —
+// which psql rejects as an invalid integer, so no connection could be made.
+func TestAddConnectionParamsDoesNotTreatHashAsFragment(t *testing.T) {
+	t.Run("hash in the database name", func(t *testing.T) {
+		got := addConnectionParams("postgres://h/db#archive")
+
+		// The database name libpq reads is everything before "?", so the hash
+		// has to stay inside it.
+		require.True(t, strings.HasPrefix(got, "postgres://h/db#archive?"), "got %q", got)
+		require.True(t, strings.HasSuffix(got, "keepalives_count=5"), "got %q", got)
+		require.NotContains(t, got, "#archive?connect_timeout=10&keepalives_count=5#")
+	})
+
+	t.Run("hash in a query value", func(t *testing.T) {
+		got := addConnectionParams("postgres://h/db?application_name=a#b")
+
+		require.True(
+			t, strings.HasPrefix(got, "postgres://h/db?application_name=a#b&"),
+			"got %q", got,
+		)
+		require.True(t, strings.HasSuffix(got, "keepalives_count=5"), "got %q", got)
+	})
 }
 
 // TestAddConnectionParamsIsIdempotent matters because Test and Dump both run
@@ -372,4 +391,45 @@ func TestAddConnectionParamsPreservesSurroundingWhitespace(t *testing.T) {
 		require.True(t, strings.HasPrefix(got, conn), "conn=%q got=%q", conn, got)
 		require.Contains(t, got, "keepalives=1")
 	}
+}
+
+// TestAddConnectionParamsHandlesTrailingBackslash covers a DSN value ending in
+// a backslash.
+//
+// libpq accepts this and quietly drops a dangling escape, so "password=secret\"
+// is the password "secret". Appending would hand that backslash the separator to
+// escape instead, making the password "secret connect_timeout=10" and swallowing
+// the parameter — authentication would start failing on a connection string that
+// worked before.
+//
+// An even number of backslashes is a different matter: the last one is already
+// escaped, so nothing is left dangling and appending is safe.
+func TestAddConnectionParamsHandlesTrailingBackslash(t *testing.T) {
+	t.Run("odd count is left untouched", func(t *testing.T) {
+		for _, conn := range []string{
+			`host=db password=secret\`,
+			`host=db password=secret\\\`,
+		} {
+			require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
+		}
+	})
+
+	t.Run("even count is safe to extend", func(t *testing.T) {
+		conn := `host=db password=secret\\`
+
+		got := addConnectionParams(conn)
+
+		require.True(t, strings.HasPrefix(got, conn+" "), "got %q", got)
+		require.Contains(t, got, "connect_timeout=10")
+		require.Contains(t, got, "keepalives_count=5")
+	})
+
+	t.Run("escape in the middle is unaffected", func(t *testing.T) {
+		conn := `host=db password=sec\\ret dbname=mydb`
+
+		got := addConnectionParams(conn)
+
+		require.True(t, strings.HasPrefix(got, conn+" "), "got %q", got)
+		require.Contains(t, got, "keepalives=1")
+	})
 }
