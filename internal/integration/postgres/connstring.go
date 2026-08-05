@@ -1,11 +1,12 @@
 package postgres
 
 import (
+	"os"
 	"strings"
 )
 
 // connParams are injected into every connection string handed to psql and
-// pg_dump, unless the user already set them.
+// pg_dump, unless the user already configured them.
 //
 // They bound the other half of the leak: a client waiting on a server that has
 // gone away. Killing the client process covers a consumer that stopped reading,
@@ -14,12 +15,53 @@ import (
 //
 // Worst case detection: keepalives_idle + (keepalives_interval * keepalives_count)
 // = 30 + (10 * 5) = 80 seconds.
-var connParams = []struct{ key, value string }{
-	{"connect_timeout", "10"},
-	{"keepalives", "1"},
-	{"keepalives_idle", "30"},
-	{"keepalives_interval", "10"},
-	{"keepalives_count", "5"},
+//
+// env is libpq's environment fallback for the parameter, where one exists. Only
+// connect_timeout has one; the keepalive parameters are declared with a NULL
+// envvar in fe-connect.c and can only come from a connection string or a
+// service file.
+var connParams = []struct{ key, value, env string }{
+	{"connect_timeout", "10", "PGCONNECT_TIMEOUT"},
+	{"keepalives", "1", ""},
+	{"keepalives_idle", "30", ""},
+	{"keepalives_interval", "10", ""},
+	{"keepalives_count", "5", ""},
+}
+
+// paramsToAdd returns the parameters still worth injecting, given the keywords
+// already present in the connection string.
+//
+// libpq resolves a parameter from the first source that provides it: the
+// connection string, then pg_service.conf, then the environment. Everything
+// injected here lands in the *first* of those, so it silently outranks
+// configuration the user put somewhere else. Each case below is a source that
+// must be allowed to win.
+func paramsToAdd(existing map[string]bool) []struct{ key, value, env string } {
+	// A service name delegates configuration to pg_service.conf, and libpq
+	// applies a service file value only when the parameter is not already set
+	// ("don't override any previous explicit setting", fe-connect.c). Since the
+	// file may set any of these, injecting any of them would silently win, so
+	// the whole connection is left to the service.
+	if existing["service"] || isEnvSet("PGSERVICE") {
+		return nil
+	}
+
+	out := []struct{ key, value, env string }{}
+	for _, p := range connParams {
+		if existing[p.key] || isEnvSet(p.env) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func isEnvSet(name string) bool {
+	if name == "" {
+		return false
+	}
+	_, ok := os.LookupEnv(name)
+	return ok
 }
 
 // addConnectionParams injects the keepalive and timeout parameters into a
@@ -76,10 +118,8 @@ func addURIParams(connString string) string {
 	}
 
 	additions := []string{}
-	for _, p := range connParams {
-		if !existing[p.key] {
-			additions = append(additions, p.key+"="+p.value)
-		}
+	for _, p := range paramsToAdd(existing) {
+		additions = append(additions, p.key+"="+p.value)
 	}
 	if len(additions) == 0 {
 		return connString
@@ -102,10 +142,8 @@ func addDSNParams(connString string) string {
 	}
 
 	out := connString
-	for _, p := range connParams {
-		if !existing[p.key] {
-			out += " " + p.key + "=" + p.value
-		}
+	for _, p := range paramsToAdd(existing) {
+		out += " " + p.key + "=" + p.value
 	}
 	return out
 }

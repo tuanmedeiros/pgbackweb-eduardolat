@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -162,6 +163,68 @@ func TestAddConnectionParamsLeavesMalformedDSNAlone(t *testing.T) {
 	} {
 		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
 	}
+}
+
+// TestAddConnectionParamsDefersToServiceFile covers connections that delegate
+// their settings to pg_service.conf.
+//
+// libpq applies a service file value only when the parameter is not already set
+// ("don't override any previous explicit setting", fe-connect.c), so anything
+// injected inline silently beats centrally managed configuration. Since the
+// service file may set any of these parameters, none may be injected.
+func TestAddConnectionParamsDefersToServiceFile(t *testing.T) {
+	for _, conn := range []string{
+		"service=production",
+		"service=production dbname=mydb",
+		"dbname=mydb service=production",
+		"postgres://host/db?service=production",
+		"postgres://host/db?sslmode=require&service=production",
+	} {
+		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
+	}
+}
+
+// TestAddConnectionParamsDefersToPGSERVICE covers the same delegation reached
+// through the environment: libpq falls back to $PGSERVICE when the connection
+// string names no service.
+func TestAddConnectionParamsDefersToPGSERVICE(t *testing.T) {
+	t.Setenv("PGSERVICE", "production")
+
+	for _, conn := range []string{
+		"host=db dbname=mydb",
+		"postgres://host/db",
+	} {
+		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
+	}
+}
+
+// TestAddConnectionParamsDefersToPGCONNECTTIMEOUT covers libpq's environment
+// fallback, which is also outranked by anything set inline.
+//
+// Only connect_timeout has such a fallback; the keepalive parameters are
+// declared with a NULL envvar, so they are still injected.
+func TestAddConnectionParamsDefersToPGCONNECTTIMEOUT(t *testing.T) {
+	t.Setenv("PGCONNECT_TIMEOUT", "45")
+
+	got := addConnectionParams("postgres://host/db")
+
+	require.NotContains(t, got, "connect_timeout")
+	require.Contains(t, got, "keepalives=1")
+	require.Contains(t, got, "keepalives_idle=30")
+}
+
+// TestAddConnectionParamsInjectsWhenEnvIsAbsent is the control for the two
+// tests above: without those variables the defaults are still applied.
+func TestAddConnectionParamsInjectsWhenEnvIsAbsent(t *testing.T) {
+	t.Setenv("PGSERVICE", "")
+	t.Setenv("PGCONNECT_TIMEOUT", "")
+	require.NoError(t, os.Unsetenv("PGSERVICE"))
+	require.NoError(t, os.Unsetenv("PGCONNECT_TIMEOUT"))
+
+	got := addConnectionParams("postgres://host/db")
+
+	require.Contains(t, got, "connect_timeout=10")
+	require.Contains(t, got, "keepalives=1")
 }
 
 // TestAddConnectionParamsDoesNotCorruptCredentials guards the reason this
