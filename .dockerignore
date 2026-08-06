@@ -1,0 +1,46 @@
+# docker/Dockerfile ends with `COPY . .`, so whatever sits in this directory at
+# build time is what ships in the image. Without this file that includes what
+# git deliberately hides -- and `git status` will never mention those, because
+# not mentioning them is its job.
+
+# Secrets, and not merely as dead weight: internal/config/env.go calls
+# godotenv.Load() during startup, which reads /app/.env. A developer's local
+# credentials copied into the image would not sit there inertly; the running
+# container would load them as its own configuration.
+.env
+.env.*
+
+# Installed inside the image by `RUN npm install`, which runs *before* the
+# COPY. Copying a host node_modules over it replaces packages built for Linux
+# with packages built for macOS, native binaries included.
+node_modules/
+
+# Produced by `task build` during the image build. A stale copy from the host
+# is at best ignored and at worst a binary for the wrong operating system.
+dist/
+.task/
+
+# Nothing in the build reads git history: set-version.sh stamps the version
+# into the source instead. The directory also holds whatever credential the
+# checkout left in .git/config.
+.git/
+
+# Not part of the application. Only internal/view/static is embedded into the
+# binary; docs/ deploys separately, and assets/ is imagery for the README.
+docs/
+assets/
+.github/
+.devcontainer/
+.vscode/
+.idea/
+
+# Local tooling configuration. These are untracked rather than ignored, so they
+# are the easy ones to forget: git shows them, nobody reads them, and they ship.
+.mcp.json
+.claude/
+
+# Temporary and test output.
+tmp/
+temp/
+*.test
+*.out
