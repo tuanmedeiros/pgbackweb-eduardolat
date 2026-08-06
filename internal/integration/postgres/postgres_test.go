@@ -19,6 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testClientTimeout is long enough that it never fires on its own; tests that
+// care about the deadline set a shorter one on the context instead.
+const testClientTimeout = 60 * time.Second
+
 func skipWithoutShellTools(t *testing.T) {
 	t.Helper()
 
@@ -85,15 +89,30 @@ exec sleep 600
 }
 
 // readPID waits for the stand-in process to report its pid.
+//
+// It polls rather than reading once: the process writes the file on its own
+// schedule, and under load — the race detector especially — it can still be
+// starting up when the caller wants the pid.
 func readPID(t *testing.T, pidFile string) int {
 	t.Helper()
 
-	raw, err := os.ReadFile(pidFile)
-	require.NoError(t, err)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		raw, err := os.ReadFile(pidFile)
+		if err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+				return pid
+			}
+		}
 
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	require.NoError(t, err)
-	return pid
+		if time.Now().After(deadline) {
+			require.FailNowf(
+				t, "the stand-in process never reported its pid",
+				"pid file: %s", pidFile,
+			)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // consumeSome reads a chunk, which proves the process started and wrote its
@@ -219,7 +238,7 @@ func TestDumpZipCloseKillsPgDump(t *testing.T) {
 
 	// DumpZip passes the connection string as the first argument, which the
 	// stand-in script reads as its pid-file path.
-	reader := New().DumpZip(context.Background(), ver, pidFile)
+	reader := New(testClientTimeout).DumpZip(context.Background(), ver, pidFile)
 	consumeSome(t, reader)
 
 	pid := readPID(t, pidFile)
@@ -249,7 +268,7 @@ func TestStalledUploadReleasesPgDump(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	dumpReader := New().DumpZip(ctx, ver, pidFile)
+	dumpReader := New(testClientTimeout).DumpZip(ctx, ver, pidFile)
 	defer dumpReader.Close()
 
 	guarded := streamutil.NewStallReader(dumpReader, 300*time.Millisecond, cancel)
@@ -276,11 +295,13 @@ func TestTestHonoursDeadline(t *testing.T) {
 	script, pidFile := endlessScript(t)
 	ver := PGVersion{Value: version{Version: "test", PSQL: script}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	// Long enough that the process reliably starts and reports its pid, short
+	// enough that the test stays quick.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	start := time.Now()
-	err := New().Test(ctx, ver, pidFile)
+	err := New(testClientTimeout).Test(ctx, ver, pidFile)
 	require.Error(t, err)
 	require.Less(
 		t, time.Since(start), 30*time.Second,

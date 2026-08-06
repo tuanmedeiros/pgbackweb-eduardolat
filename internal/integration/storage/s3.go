@@ -20,7 +20,7 @@ import (
 )
 
 // createS3Client creates a new S3 client
-func createS3Client(
+func (c *Client) createS3Client(
 	accessKey, secretKey, region, endpoint string,
 ) (*s3.Client, error) {
 	credentialsProvider := credentials.NewStaticCredentialsProvider(
@@ -44,7 +44,7 @@ func createS3Client(
 		config.WithEndpointResolver(endpointResolver),
 		config.WithCredentialsProvider(credentialsProvider),
 		config.WithHTTPClient(
-			newHTTPClient(uploadWriteTimeout, responseHeaderTimeout),
+			newHTTPClient(c.writeTimeout, c.responseTimeout),
 		),
 	)
 	if err != nil {
@@ -56,11 +56,11 @@ func createS3Client(
 }
 
 // S3Test tests the connection to S3
-func (Client) S3Test(
+func (c *Client) S3Test(
 	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName string,
 ) error {
-	s3Client, err := createS3Client(
+	s3Client, err := c.createS3Client(
 		accessKey, secretKey, region, endpoint,
 	)
 	if err != nil {
@@ -80,21 +80,10 @@ func (Client) S3Test(
 	return nil
 }
 
-const (
-	// abortTimeout bounds the cleanup of a failed multipart upload.
-	abortTimeout = 30 * time.Second
-
-	// responseHeaderTimeout bounds how long a destination may take to start
-	// answering once a request body has been sent. It is generous because
-	// completing a large multipart upload legitimately takes a while.
-	responseHeaderTimeout = 5 * time.Minute
-
-	// uploadWriteTimeout bounds how long a single write to the destination may
-	// block. It is refreshed on every write, so it limits lack of progress
-	// rather than total duration: an upload that keeps moving is never cut off,
-	// however long it takes overall.
-	uploadWriteTimeout = 2 * time.Minute
-)
+// abortTimeout bounds the cleanup of a failed multipart upload. It is not
+// configurable: it guards a single small request, made on a context detached
+// from the caller's, so there is nothing for an operator to tune.
+const abortTimeout = 30 * time.Second
 
 // writeDeadlineConn bounds how long any single write to the peer may block.
 //
@@ -188,12 +177,12 @@ func abortMultipartUpload(
 // S3Upload uploads a file to S3 from a reader.
 //
 // Returns the file size, in bytes.
-func (Client) S3Upload(
+func (c *Client) S3Upload(
 	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName, key string,
 	fileReader io.Reader,
 ) (int64, error) {
-	s3Client, err := createS3Client(
+	s3Client, err := c.createS3Client(
 		accessKey, secretKey, region, endpoint,
 	)
 	if err != nil {
@@ -245,11 +234,11 @@ func (Client) S3Upload(
 }
 
 // S3Delete deletes a file from S3
-func (Client) S3Delete(
+func (c *Client) S3Delete(
 	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName, key string,
 ) error {
-	s3Client, err := createS3Client(
+	s3Client, err := c.createS3Client(
 		accessKey, secretKey, region, endpoint,
 	)
 	if err != nil {
@@ -273,12 +262,12 @@ func (Client) S3Delete(
 }
 
 // S3GetDownloadLink generates a presigned URL for downloading a file from S3
-func (Client) S3GetDownloadLink(
+func (c *Client) S3GetDownloadLink(
 	ctx context.Context,
 	accessKey, secretKey, region, endpoint, bucketName, key string,
 	expiration time.Duration,
 ) (string, error) {
-	s3Client, err := createS3Client(
+	s3Client, err := c.createS3Client(
 		accessKey, secretKey, region, endpoint,
 	)
 	if err != nil {

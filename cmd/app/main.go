@@ -42,7 +42,7 @@ func main() {
 	}()
 	dbgen := dbgen.New(db)
 
-	ints := integration.New()
+	ints := integration.New(env)
 	servs := service.New(env, dbgen, cr, ints)
 	initSchedule(cr, servs)
 

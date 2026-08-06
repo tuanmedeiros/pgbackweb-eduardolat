@@ -18,7 +18,7 @@ const (
 // to the local backups directory.
 //
 // Returns the size of the file created, in bytes.
-func (Client) LocalUpload(
+func (c *Client) LocalUpload(
 	ctx context.Context, relativeFilePath string, fileReader io.Reader,
 ) (int64, error) {
 	if err := ctx.Err(); err != nil {
@@ -54,7 +54,7 @@ func (Client) LocalUpload(
 
 // LocalDelete Deletes a file using the provided path relative to the local
 // backups directory.
-func (Client) LocalDelete(relativeFilePath string) error {
+func (c *Client) LocalDelete(relativeFilePath string) error {
 	fullPath := strutil.CreatePath(true, localBackupsDir, relativeFilePath)
 
 	err := os.Remove(fullPath)
@@ -67,6 +67,6 @@ func (Client) LocalDelete(relativeFilePath string) error {
 
 // LocalGetFullPath Returns the full path of a file using the provided relative
 // file path to the local backups directory.
-func (Client) LocalGetFullPath(relativeFilePath string) string {
+func (c *Client) LocalGetFullPath(relativeFilePath string) string {
 	return strutil.CreatePath(true, localBackupsDir, relativeFilePath)
 }

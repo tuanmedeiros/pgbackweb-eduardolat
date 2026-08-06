@@ -15,15 +15,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// uploadStallTimeout is how long the destination may go without consuming a
-// single byte of the dump before the execution is abandoned.
-//
-// A stuck upload is worse than a failed one: nothing returns, so no cleanup
-// runs, and pg_dump keeps a transaction open on the source database forever.
-// The bound is generous because a healthy upload can legitimately pause while
-// its in-flight parts finish; only a genuinely dead transfer reaches it.
-const uploadStallTimeout = 30 * time.Minute
-
 // RunExecution runs a backup execution
 func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 	// Bookkeeping has to outlive the cancellation below: recording that a
@@ -133,12 +124,16 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 
 	// A destination that hangs rather than failing would never return, so the
 	// cleanup above would never run either.
+	// A stuck upload is worse than a failed one: nothing returns, so no cleanup
+	// runs, and pg_dump keeps a transaction open on the source database
+	// forever.
+	stallTimeout := s.env.PBW_BACKUP_STALL_TIMEOUT
 	guardedReader := streamutil.NewStallReader(
-		dumpReader, uploadStallTimeout, func() {
+		dumpReader, stallTimeout, func() {
 			logger.Error("backup upload stalled, aborting", logger.KV{
 				"backup_id":    backupID.String(),
 				"execution_id": ex.ID.String(),
-				"stalled_for":  uploadStallTimeout.String(),
+				"stalled_for":  stallTimeout.String(),
 			})
 			// Release the source database first: that is the damage being
 			// contained, and it must not depend on the upload unwinding. A
