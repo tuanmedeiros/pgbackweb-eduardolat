@@ -29,6 +29,11 @@ import (
 // The second case is also why watching can stop at the end of the stream: once
 // the producer has signalled EOF it has exited, so the resources this exists to
 // protect are already released.
+//
+// Stopping there does mean a consumer can still hang afterwards, holding up the
+// caller without holding the producer. Bounding that is the consumer's own
+// responsibility — see the write and response deadlines on the S3 client — since
+// only it can tell a stuck transfer from a slow one.
 type StallReader struct {
 	reader  io.Reader
 	timeout time.Duration

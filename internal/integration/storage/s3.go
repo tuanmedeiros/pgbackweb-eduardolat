@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -36,24 +37,15 @@ func createS3Client(
 		}, nil
 	})
 
-	// The SDK bounds connecting and the TLS handshake, but nothing after that:
-	// a destination that accepts the upload and then never answers would hang
-	// forever. This bounds only the wait for response headers, which starts
-	// once the request body has been sent, so a slow but progressing upload is
-	// unaffected however long it takes.
-	httpClient := awshttp.NewBuildableClient().WithTransportOptions(
-		func(tr *http.Transport) {
-			tr.ResponseHeaderTimeout = responseHeaderTimeout
-		},
-	)
-
 	//nolint:all
 	conf, err := config.LoadDefaultConfig(
 		context.TODO(),
 		config.WithRegion(region),
 		config.WithEndpointResolver(endpointResolver),
 		config.WithCredentialsProvider(credentialsProvider),
-		config.WithHTTPClient(httpClient),
+		config.WithHTTPClient(
+			newHTTPClient(uploadWriteTimeout, responseHeaderTimeout),
+		),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("error initializing storage config: %w", err)
@@ -96,7 +88,62 @@ const (
 	// answering once a request body has been sent. It is generous because
 	// completing a large multipart upload legitimately takes a while.
 	responseHeaderTimeout = 5 * time.Minute
+
+	// uploadWriteTimeout bounds how long a single write to the destination may
+	// block. It is refreshed on every write, so it limits lack of progress
+	// rather than total duration: an upload that keeps moving is never cut off,
+	// however long it takes overall.
+	uploadWriteTimeout = 2 * time.Minute
 )
+
+// writeDeadlineConn bounds how long any single write to the peer may block.
+//
+// This is the only thing that catches a destination which stops reading the
+// request body: the socket buffers fill, the write blocks, and no other timeout
+// applies. ResponseHeaderTimeout does not, because it starts counting only once
+// the body has been fully written, and the stall watchdog on the dump does not
+// either, because by then the uploader may have buffered the whole dump and
+// stopped reading from it.
+type writeDeadlineConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *writeDeadlineConn) Write(b []byte) (int, error) {
+	// Refreshed per write, so this measures stalled progress, not total time.
+	if err := c.SetWriteDeadline(time.Now().Add(c.timeout)); err != nil {
+		return 0, err
+	}
+	return c.Conn.Write(b)
+}
+
+// newHTTPClient builds the HTTP client used for every S3 request.
+//
+// The SDK bounds connecting and the TLS handshake, but nothing after that, and
+// it sets no overall request timeout. Left alone, a destination that accepts
+// the connection and then stops making progress hangs the backup forever.
+func newHTTPClient(
+	writeTimeout, respHeaderTimeout time.Duration,
+) *awshttp.BuildableClient {
+	return awshttp.NewBuildableClient().WithTransportOptions(
+		func(tr *http.Transport) {
+			tr.ResponseHeaderTimeout = respHeaderTimeout
+
+			// Wrap the SDK's own dialer rather than replacing it, so its
+			// tracing and dial timeouts are kept.
+			dial := tr.DialContext
+			tr.DialContext = func(
+				ctx context.Context, network, addr string,
+			) (net.Conn, error) {
+				conn, err := dial(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				return &writeDeadlineConn{Conn: conn, timeout: writeTimeout}, nil
+			}
+		},
+	)
+}
 
 // abortMultipartUpload removes the parts left behind by a failed multipart
 // upload.

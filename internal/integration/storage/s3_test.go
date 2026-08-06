@@ -1,12 +1,17 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -121,4 +126,92 @@ func TestAbortMultipartUploadFindsWrappedFailure(t *testing.T) {
 	got := rec.got()
 	require.Len(t, got, 1)
 	require.Contains(t, got[0], "uploadId=upload-456")
+}
+
+// TestHTTPClientBoundsBlockedBodyWrite covers the destination that accepts the
+// connection and then stops reading the request body.
+//
+// Nothing else catches this. ResponseHeaderTimeout starts counting only once the
+// body has been fully written, and the stall watchdog on the dump has already
+// stopped, because for any dump smaller than the uploader's buffer the whole
+// thing is read before transmission even begins. Without a write deadline the
+// backup hangs forever and its execution stays "running".
+func TestHTTPClientBoundsBlockedBodyWrite(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Never read anything: the peer has stopped consuming the body.
+		<-done
+	}()
+
+	client := newHTTPClient(300*time.Millisecond, 10*time.Second)
+
+	// Large enough that the send and receive buffers cannot swallow it, so the
+	// write has to block.
+	body := bytes.NewReader(make([]byte, 64<<20))
+	req, err := http.NewRequest(
+		http.MethodPut, "http://"+ln.Addr().String()+"/dump.zip", body,
+	)
+	require.NoError(t, err)
+	req.ContentLength = int64(body.Size())
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+
+	require.Error(t, err, "a blocked body write must fail rather than hang")
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	require.Less(
+		t, time.Since(start), 30*time.Second,
+		"the write deadline must fire promptly",
+	)
+}
+
+// TestWriteDeadlineConnRefreshesEachWrite is the false positive to avoid: the
+// deadline bounds lack of progress, not total duration, so a slow but moving
+// transfer must survive well past the timeout.
+func TestWriteDeadlineConnRefreshesEachWrite(t *testing.T) {
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+
+	const (
+		timeout = 200 * time.Millisecond
+		writes  = 6
+		delay   = 150 * time.Millisecond // slow, but always progressing
+	)
+
+	go func() {
+		buf := make([]byte, 8)
+		for i := 0; i < writes; i++ {
+			time.Sleep(delay)
+			if _, err := io.ReadFull(server, buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	conn := &writeDeadlineConn{Conn: client, timeout: timeout}
+
+	start := time.Now()
+	for i := 0; i < writes; i++ {
+		_, err := conn.Write([]byte("12345678"))
+		require.NoError(t, err, "write %d of a slow but progressing transfer failed", i)
+	}
+
+	require.Greater(
+		t, time.Since(start), timeout,
+		"the test must run longer than the timeout for it to prove anything",
+	)
 }
