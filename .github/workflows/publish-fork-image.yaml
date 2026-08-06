@@ -69,8 +69,13 @@ jobs:
             exit 1
           fi
 
-          if [[ ! $IMAGE =~ ^[a-z0-9]+([._-][a-z0-9]+)*/[a-z0-9]+([._-][a-z0-9]+)*$ ]]; then
-            echo "::error::image must be a Docker Hub repository, e.g. tuanmedeiros/pgbackweb (got '$IMAGE')"
+          # Docker reads a first component carrying a dot or a colon, or one
+          # that is exactly "localhost", as a registry hostname. Since the only
+          # registry this workflow authenticates to is Docker Hub, such an
+          # input would otherwise validate, occupy both runners for a full
+          # build, and only then fail at push.
+          if [[ ! $IMAGE =~ ^[a-z0-9]+(-[a-z0-9]+)*/[a-z0-9]+([._-][a-z0-9]+)*$ || $IMAGE == localhost/* ]]; then
+            echo "::error::image must be a Docker Hub namespace/repository, e.g. tuanmedeiros/pgbackweb. A dot, a colon, or 'localhost' in the first component would push to a different registry, and this workflow only logs in to Docker Hub (got '$IMAGE')"
             exit 1
           fi
 
@@ -107,14 +112,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
 
-      # The <tag>-<sha> images name a commit, which reads as though they name a
-      # build. They do not: docker/Dockerfile tracks moving base images,
-      # unpinned apt packages, and n@latest, so building this commit again can
-      # hand you different PostgreSQL client patch versions than the ones now
-      # deployed. Replacing one is therefore a silent change to something
-      # already running, and the tag people roll back to is the worst place for
-      # that. Dispatch with overwrite=true when replacing it is the intent.
-      - name: Refuse to replace an existing build
+      # Two different accidents, so two checks. The order is what keeps each
+      # message truthful: if the SHA-qualified images exist, this is a rebuild
+      # of a commit already published, and that is what the operator hears
+      # about. Only when they do not exist can an existing plain tag mean the
+      # version is being moved to a different commit.
+      - name: Refuse to replace what is already published
         if: ${{ !inputs.overwrite }}
         env:
           IMAGE: ${{ inputs.image }}
@@ -123,9 +126,27 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The <tag>-<sha> images name a commit, which reads as though they
+          # name a build. They do not: docker/Dockerfile tracks moving base
+          # images, unpinned apt packages, and n@latest, so building this
+          # commit again can hand you different PostgreSQL client patch
+          # versions than the ones now deployed. The tag people roll back to is
+          # the worst place for a silent change like that.
           for name in "$TAG-$SHA" "$TAG-$SHA-amd64" "$TAG-$SHA-arm64"; do
             if docker manifest inspect "$IMAGE:$name" >/dev/null 2>&1; then
               echo "::error::$IMAGE:$name already exists. Rebuilding this commit would replace it with a differently built image; dispatch with overwrite=true to do that on purpose."
+              exit 1
+            fi
+          done
+
+          # Reaching here means this commit was never published under this
+          # version -- so an existing plain tag was published from a different
+          # one, and pushing would move the tag a compose file points at. The
+          # next restart would then pull different code under an unchanged
+          # version, which is the failure the SHA tags exist to avoid.
+          for name in "$TAG" "$TAG-amd64" "$TAG-arm64"; do
+            if docker manifest inspect "$IMAGE:$name" >/dev/null 2>&1; then
+              echo "::error::$IMAGE:$name already exists, published from a different commit. Pushing would move a tag that is already deployed. Bump the fork version instead, or dispatch with overwrite=true to move it on purpose."
               exit 1
             fi
           done
