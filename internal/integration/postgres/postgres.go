@@ -68,19 +68,19 @@ var (
 	PGVersionsDesc = []PGVersion{PG18, PG17, PG16, PG15, PG14, PG13}
 )
 
-// testTimeout bounds the psql connectivity check. Without it, a host that
-// silently drops packets keeps a psql process alive for as long as the TCP
-// keepalives take to notice (hours), and every one of those processes holds a
-// connection open on the target database.
-//
-// It is deliberately generous: exceeding it marks the database unhealthy and
-// fails the backup, so it must only ever catch a truly stuck connection.
-const testTimeout = 60 * time.Second
+type Client struct {
+	// testTimeout bounds the psql connectivity check. Without it, a host that
+	// silently drops packets keeps a psql process alive for as long as the TCP
+	// keepalives take to notice (hours), and every one of those processes holds
+	// a connection open on the target database.
+	//
+	// Exceeding it marks the database unhealthy and fails the backup, so it
+	// should only ever catch a truly stuck connection.
+	testTimeout time.Duration
+}
 
-type Client struct{}
-
-func New() *Client {
-	return &Client{}
+func New(testTimeout time.Duration) *Client {
+	return &Client{testTimeout: testTimeout}
 }
 
 // cmdReader is an io.ReadCloser fed by an OS process through an io.Pipe. Its
@@ -115,7 +115,7 @@ func (r *cmdReader) Close() error {
 
 // ParseVersion returns the PGVersion enum member for the given PostgreSQL
 // version as a string.
-func (Client) ParseVersion(version string) (PGVersion, error) {
+func (c *Client) ParseVersion(version string) (PGVersion, error) {
 	switch version {
 	case "13":
 		return PG13, nil
@@ -138,10 +138,10 @@ func (Client) ParseVersion(version string) (PGVersion, error) {
 //
 // The check is bounded by testTimeout so an unreachable host cannot leave a
 // psql process (and the connection it holds) running indefinitely.
-func (Client) Test(
+func (c *Client) Test(
 	ctx context.Context, version PGVersion, connString string,
 ) error {
-	ctx, cancel := context.WithTimeout(ctx, testTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.testTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(
@@ -152,7 +152,7 @@ func (Client) Test(
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return fmt.Errorf(
 				"timeout after %s running psql test v%s: %s",
-				testTimeout, version.Value.Version, output,
+				c.testTimeout, version.Value.Version, output,
 			)
 		}
 		return fmt.Errorf(
@@ -204,7 +204,7 @@ type DumpParams struct {
 // before EOF (an upload that failed halfway, for example) would otherwise
 // leave pg_dump blocked on a full pipe and its connection stuck in
 // "idle in transaction" until the database is restarted.
-func (Client) Dump(
+func (c *Client) Dump(
 	ctx context.Context, version PGVersion, connString string,
 	params ...DumpParams,
 ) io.ReadCloser {
@@ -330,7 +330,7 @@ func (c *Client) DumpZip(
 //   - connString: connection string to the database
 //   - isLocal: whether the ZIP file is local or a URL
 //   - zipURLOrPath: URL or path to the ZIP file
-func (Client) RestoreZip(
+func (c *Client) RestoreZip(
 	ctx context.Context, version PGVersion, connString string,
 	isLocal bool, zipURLOrPath string,
 ) error {

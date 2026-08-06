@@ -17,6 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newTestClient builds a client with timeouts long enough never to fire on
+// their own, so a test that cares about one sets it explicitly.
+func newTestClient() *Client {
+	return New(30*time.Second, 30*time.Second)
+}
+
 // fakeMultiUploadFailure satisfies manager.MultiUploadFailure, the interface the
 // SDK returns when a multipart upload leaves parts behind.
 type fakeMultiUploadFailure struct {
@@ -63,7 +69,7 @@ func (r *recordingS3) got() []string {
 func TestAbortMultipartUploadRunsOnCancelledContext(t *testing.T) {
 	rec := newRecordingS3(t)
 
-	s3Client, err := createS3Client("ak", "sk", "us-east-1", rec.server.URL)
+	s3Client, err := newTestClient().createS3Client("ak", "sk", "us-east-1", rec.server.URL)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -97,7 +103,7 @@ func TestAbortMultipartUploadSkipsNonMultipartErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := newRecordingS3(t)
 
-			s3Client, err := createS3Client("ak", "sk", "us-east-1", rec.server.URL)
+			s3Client, err := newTestClient().createS3Client("ak", "sk", "us-east-1", rec.server.URL)
 			require.NoError(t, err)
 
 			abortMultipartUpload(
@@ -114,7 +120,7 @@ func TestAbortMultipartUploadSkipsNonMultipartErrors(t *testing.T) {
 func TestAbortMultipartUploadFindsWrappedFailure(t *testing.T) {
 	rec := newRecordingS3(t)
 
-	s3Client, err := createS3Client("ak", "sk", "us-east-1", rec.server.URL)
+	s3Client, err := newTestClient().createS3Client("ak", "sk", "us-east-1", rec.server.URL)
 	require.NoError(t, err)
 
 	wrapped := errors.Join(
@@ -267,7 +273,7 @@ func newFakeS3(t *testing.T) *fakeS3 {
 
 // upload runs a multipart upload large enough to be split into parts.
 func (f *fakeS3) upload(ctx context.Context) error {
-	_, err := Client{}.S3Upload(
+	_, err := newTestClient().S3Upload(
 		ctx, "ak", "sk", "us-east-1", f.server.URL, "b", "k",
 		bytes.NewReader(make([]byte, 12<<20)),
 	)

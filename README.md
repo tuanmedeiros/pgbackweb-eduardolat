@@ -138,6 +138,16 @@ You only need to configure the following environment variables:
 
 - `TZ`: Optional. Your [timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List). Default is `UTC`. This impacts logging, backup filenames and default timezone in the web interface.
 
+The following timeouts stop a stuck operation from holding resources forever. Each one bounds a **lack of progress**, never the total duration of a backup, so a slow but advancing backup is never interrupted no matter how long it takes. Raise them only if something in your setup legitimately pauses for longer. All accept Go duration strings such as `90s`, `5m` or `2h`.
+
+- `PBW_DATABASE_TEST_TIMEOUT`: Optional. How long the connectivity check against each database may take before that database is marked unhealthy. Default `60s`.
+
+- `PBW_BACKUP_STALL_TIMEOUT`: Optional. How long a destination may go without consuming any of the backup before the backup is abandoned and marked as failed. Default `30m`.
+
+- `PBW_DESTINATION_WRITE_TIMEOUT`: Optional. How long a single write to a destination may block. Refreshed on every write, so it only catches a transfer that has stopped moving. Default `2m`.
+
+- `PBW_DESTINATION_RESPONSE_TIMEOUT`: Optional. How long a destination may take to start answering a request. Default `5m`.
+
 ## Screenshot
 
 <img src="https://raw.githubusercontent.com/eduardolat/pgbackweb/main/assets/screenshot.png" />
