@@ -146,16 +146,16 @@ func newHTTPClient(
 }
 
 // abortMultipartUpload removes the parts left behind by a failed multipart
-// upload.
+// upload. It is the only thing that does so — the uploader is configured with
+// LeavePartsOnError, which turns off the SDK's own attempt.
 //
-// The SDK already tries this on failure, but it reuses the context the upload
-// was given and discards the result. When the upload failed *because* that
-// context was cancelled — which is how a stalled backup is unwound — the
-// SDK's attempt fails instantly and silently, and the parts already uploaded
-// stay on the bucket, billable, until a lifecycle rule removes them.
+// That attempt cannot be relied on: it reuses the context the upload was given,
+// so when the failure *was* a cancelled context — which is how a stalled backup
+// is unwound — it fails instantly, and its error is discarded. The parts would
+// stay on the bucket, billable, until a lifecycle rule removed them.
 //
-// So the abort is retried here on a context that is deliberately detached from
-// the caller's.
+// Doing it here instead means one abort, always on a context that still works,
+// and a real error when it fails.
 func abortMultipartUpload(
 	ctx context.Context, s3Client *s3.Client, bucketName, key string,
 	uploadErr error,
@@ -203,7 +203,14 @@ func (Client) S3Upload(
 	key = strutil.RemoveLeadingSlash(key)
 	contentType := strutil.GetContentTypeFromFileName(key)
 
-	uploader := manager.NewUploader(s3Client)
+	uploader := manager.NewUploader(s3Client, func(u *manager.Uploader) {
+		// Take sole ownership of cleaning up a failed multipart upload. The
+		// SDK's own attempt reuses the upload's context, so it silently does
+		// nothing when the failure *was* a cancelled context — and when it does
+		// work, a second abort here would draw a NoSuchUpload and be logged as a
+		// cleanup failure that never happened.
+		u.LeavePartsOnError = true
+	})
 	_, err = uploader.Upload(
 		ctx,
 		&s3.PutObjectInput{

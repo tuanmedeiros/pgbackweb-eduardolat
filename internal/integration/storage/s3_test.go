@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -213,5 +214,120 @@ func TestWriteDeadlineConnRefreshesEachWrite(t *testing.T) {
 	require.Greater(
 		t, time.Since(start), timeout,
 		"the test must run longer than the timeout for it to prove anything",
+	)
+}
+
+// fakeS3 is a minimal multipart endpoint that fails part uploads and counts the
+// aborts it receives.
+type fakeS3 struct {
+	server *httptest.Server
+	aborts atomic.Int32
+
+	// onPart runs once, when the first part upload arrives. It is how a test
+	// interrupts an upload that is already under way.
+	onPart   func()
+	partOnce sync.Once
+}
+
+func newFakeS3(t *testing.T) *fakeS3 {
+	t.Helper()
+
+	f := &fakeS3{}
+	f.server = httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			switch {
+			case r.Method == http.MethodPost && q.Has("uploads"):
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>`+
+					`<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>k</Key>`+
+					`<UploadId>upload-xyz</UploadId></InitiateMultipartUploadResult>`)
+
+			case r.Method == http.MethodDelete && q.Has("uploadId"):
+				f.aborts.Add(1)
+				w.WriteHeader(http.StatusNoContent)
+
+			case r.Method == http.MethodPut && q.Has("partNumber"):
+				if f.onPart != nil {
+					f.partOnce.Do(f.onPart)
+				}
+				// A non-retryable failure, so the upload gives up promptly.
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `<?xml version="1.0"?><Error>`+
+					`<Code>AccessDenied</Code><Message>denied</Message></Error>`)
+
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+		},
+	))
+	t.Cleanup(f.server.Close)
+	return f
+}
+
+// upload runs a multipart upload large enough to be split into parts.
+func (f *fakeS3) upload(ctx context.Context) error {
+	_, err := Client{}.S3Upload(
+		ctx, "ak", "sk", "us-east-1", f.server.URL, "b", "k",
+		bytes.NewReader(make([]byte, 12<<20)),
+	)
+	return err
+}
+
+// TestS3UploadAbortsMultipartExactlyOnce pins down ownership of the cleanup.
+//
+// The SDK aborts a failed multipart upload itself, so leaving that enabled and
+// also aborting here sent two requests: S3 answers the second with NoSuchUpload,
+// which would be logged as a cleanup failure that never happened, on every
+// ordinary failed backup. The SDK's attempt is turned off instead, because it
+// reuses the upload's context and so does nothing at all when the failure was a
+// cancellation.
+func TestS3UploadAbortsMultipartExactlyOnce(t *testing.T) {
+	f := newFakeS3(t)
+
+	err := f.upload(context.Background())
+
+	require.Error(t, err)
+	require.EqualValues(
+		t, 1, f.aborts.Load(),
+		"a failed multipart upload must be aborted exactly once",
+	)
+}
+
+// TestS3UploadAbortsMultipartAfterCancel is the case the SDK cannot handle. The
+// upload is interrupted once it is already under way -- how a stalled backup is
+// unwound -- so the SDK's own abort would run on the very context that was just
+// cancelled, fail instantly, and leave the parts on the bucket.
+func TestS3UploadAbortsMultipartAfterCancel(t *testing.T) {
+	f := newFakeS3(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.onPart = cancel // interrupt once the multipart upload exists
+
+	err := f.upload(ctx)
+
+	require.Error(t, err)
+	require.EqualValues(
+		t, 1, f.aborts.Load(),
+		"an interrupted upload must still have its parts cleaned up",
+	)
+}
+
+// TestS3UploadSkipsAbortWhenNothingWasCreated checks the other direction: if the
+// upload never got as far as creating a multipart upload, there is nothing to
+// clean up and no request should be sent.
+func TestS3UploadSkipsAbortWhenNothingWasCreated(t *testing.T) {
+	f := newFakeS3(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := f.upload(ctx)
+
+	require.Error(t, err)
+	require.EqualValues(
+		t, 0, f.aborts.Load(),
+		"nothing was created, so nothing should be aborted",
 	)
 }
