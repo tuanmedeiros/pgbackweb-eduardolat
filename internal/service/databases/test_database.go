@@ -58,7 +58,7 @@ func (s *Service) TestDatabase(
 		return fmt.Errorf("error parsing PostgreSQL version: %w", err)
 	}
 
-	err = s.ints.PGClient.Test(pgVersion, connString)
+	err = s.ints.PGClient.Test(ctx, pgVersion, connString)
 	if err != nil {
 		return fmt.Errorf("error testing database: %w", err)
 	}

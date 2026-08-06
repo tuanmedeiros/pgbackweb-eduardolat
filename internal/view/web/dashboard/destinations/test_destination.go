@@ -17,6 +17,7 @@ func (h *handlers) testDestinationHandler(c echo.Context) error {
 	}
 
 	err := h.servs.DestinationsService.TestDestination(
+		c.Request().Context(),
 		formData.AccessKey, formData.SecretKey, formData.Region, formData.Endpoint,
 		formData.BucketName,
 	)

@@ -9,13 +9,32 @@ import (
 	"github.com/eduardolat/pgbackweb/internal/database/dbgen"
 	"github.com/eduardolat/pgbackweb/internal/integration/postgres"
 	"github.com/eduardolat/pgbackweb/internal/logger"
+	"github.com/eduardolat/pgbackweb/internal/util/streamutil"
 	"github.com/eduardolat/pgbackweb/internal/util/strutil"
 	"github.com/eduardolat/pgbackweb/internal/util/timeutil"
 	"github.com/google/uuid"
 )
 
+// uploadStallTimeout is how long the destination may go without consuming a
+// single byte of the dump before the execution is abandoned.
+//
+// A stuck upload is worse than a failed one: nothing returns, so no cleanup
+// runs, and pg_dump keeps a transaction open on the source database forever.
+// The bound is generous because a healthy upload can legitimately pause while
+// its in-flight parts finish; only a genuinely dead transfer reaches it.
+const uploadStallTimeout = 30 * time.Minute
+
 // RunExecution runs a backup execution
 func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
+	// Bookkeeping has to outlive the cancellation below: recording that a
+	// backup was abandoned is exactly what the stall handling is for, so it
+	// keeps the caller's context.
+	dbCtx := ctx
+
+	// Cancelling this unwinds an upload that hangs instead of failing.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	updateExec := func(params dbgen.ExecutionsServiceUpdateExecutionParams) error {
 		if params.Status.String == "success" {
 			s.webhooksService.RunExecutionSuccess(backupID)
@@ -26,7 +45,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 		}
 
 		_, err := s.dbgen.ExecutionsServiceUpdateExecution(
-			ctx, params,
+			dbCtx, params,
 		)
 		return err
 	}
@@ -39,7 +58,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 	}
 
 	back, err := s.dbgen.ExecutionsServiceGetBackupData(
-		ctx, dbgen.ExecutionsServiceGetBackupDataParams{
+		dbCtx, dbgen.ExecutionsServiceGetBackupDataParams{
 			BackupID:      backupID,
 			EncryptionKey: s.env.PBW_ENCRYPTION_KEY,
 		},
@@ -49,7 +68,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 		return err
 	}
 
-	ex, err := s.CreateExecution(ctx, dbgen.ExecutionsServiceCreateExecutionParams{
+	ex, err := s.CreateExecution(dbCtx, dbgen.ExecutionsServiceCreateExecutionParams{
 		BackupID: backupID,
 		Status:   "running",
 	})
@@ -60,7 +79,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 
 	if !back.BackupIsLocal {
 		err = s.ints.StorageClient.S3Test(
-			back.DecryptedDestinationAccessKey, back.DecryptedDestinationSecretKey,
+			ctx, back.DecryptedDestinationAccessKey, back.DecryptedDestinationSecretKey,
 			back.DestinationRegion.String, back.DestinationEndpoint.String,
 			back.DestinationBucketName.String,
 		)
@@ -86,7 +105,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 		})
 	}
 
-	err = s.ints.PGClient.Test(pgVersion, back.DecryptedDatabaseConnectionString)
+	err = s.ints.PGClient.Test(ctx, pgVersion, back.DecryptedDatabaseConnectionString)
 	if err != nil {
 		logError(err)
 		return updateExec(dbgen.ExecutionsServiceUpdateExecutionParams{
@@ -98,7 +117,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 	}
 
 	dumpReader := s.ints.PGClient.DumpZip(
-		pgVersion, back.DecryptedDatabaseConnectionString, postgres.DumpParams{
+		ctx, pgVersion, back.DecryptedDatabaseConnectionString, postgres.DumpParams{
 			DataOnly:   back.BackupOptDataOnly,
 			SchemaOnly: back.BackupOptSchemaOnly,
 			Clean:      back.BackupOptClean,
@@ -107,6 +126,29 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 			NoComments: back.BackupOptNoComments,
 		},
 	)
+	// Every early return below (a failed upload, most of all) abandons this
+	// reader mid-stream. Closing it is what stops pg_dump from lingering on the
+	// source database with an idle connection.
+	defer dumpReader.Close()
+
+	// A destination that hangs rather than failing would never return, so the
+	// cleanup above would never run either.
+	guardedReader := streamutil.NewStallReader(
+		dumpReader, uploadStallTimeout, func() {
+			logger.Error("backup upload stalled, aborting", logger.KV{
+				"backup_id":    backupID.String(),
+				"execution_id": ex.ID.String(),
+				"stalled_for":  uploadStallTimeout.String(),
+			})
+			// Release the source database first: that is the damage being
+			// contained, and it must not depend on the upload unwinding. A
+			// local write wedged on a stuck disk, for instance, ignores the
+			// cancellation below.
+			_ = dumpReader.Close()
+			cancel()
+		},
+	)
+	defer guardedReader.Stop()
 
 	date := time.Now().Format(timeutil.LayoutSlashYYYYMMDD)
 	file := fmt.Sprintf(
@@ -118,7 +160,7 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 	fileSize := int64(0)
 
 	if back.BackupIsLocal {
-		fileSize, err = s.ints.StorageClient.LocalUpload(path, dumpReader)
+		fileSize, err = s.ints.StorageClient.LocalUpload(ctx, path, guardedReader)
 		if err != nil {
 			logError(err)
 			return updateExec(dbgen.ExecutionsServiceUpdateExecutionParams{
@@ -133,9 +175,9 @@ func (s *Service) RunExecution(ctx context.Context, backupID uuid.UUID) error {
 
 	if !back.BackupIsLocal {
 		fileSize, err = s.ints.StorageClient.S3Upload(
-			back.DecryptedDestinationAccessKey, back.DecryptedDestinationSecretKey,
+			ctx, back.DecryptedDestinationAccessKey, back.DecryptedDestinationSecretKey,
 			back.DestinationRegion.String, back.DestinationEndpoint.String,
-			back.DestinationBucketName.String, path, dumpReader,
+			back.DestinationBucketName.String, path, guardedReader,
 		)
 		if err != nil {
 			logError(err)
