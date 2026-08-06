@@ -433,3 +433,102 @@ func TestAddConnectionParamsHandlesTrailingBackslash(t *testing.T) {
 		require.Contains(t, got, "keepalives=1")
 	})
 }
+
+// TestAddConnectionParamsReusesTrailingSeparator covers a query that already
+// ends in its own separator.
+//
+// libpq accepts a single trailing "&" — "?sslmode=require&" connects fine — but
+// rejects an empty parameter, so adding a second "&" produces "&&" and fails
+// with "missing key/value separator". The same applies to a URI ending in a bare
+// "?".
+func TestAddConnectionParamsReusesTrailingSeparator(t *testing.T) {
+	tests := []struct {
+		name       string
+		connString string
+		want       string
+	}{
+		{
+			name:       "query ending in an ampersand",
+			connString: "postgres://host/db?sslmode=require&",
+			want:       "postgres://host/db?sslmode=require&connect_timeout=10",
+		},
+		{
+			name:       "empty query",
+			connString: "postgres://host/db?",
+			want:       "postgres://host/db?connect_timeout=10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := addConnectionParams(tt.connString)
+
+			require.True(t, strings.HasPrefix(got, tt.want), "got %q", got)
+			require.NotContains(t, got, "&&")
+			require.NotContains(t, got, "?&")
+		})
+	}
+}
+
+// TestAddConnectionParamsFindsQueryAfterCredentials covers credentials that
+// contain a "?".
+//
+// libpq scans user credentials up to the first "@" and only then looks for the
+// query, so "postgres://user:pa?ss@host/db" has no query at all. Taking that
+// first "?" as the delimiter would append the parameters into the database name,
+// which libpq would read as part of the name rather than as options.
+func TestAddConnectionParamsFindsQueryAfterCredentials(t *testing.T) {
+	t.Run("question mark in the password", func(t *testing.T) {
+		conn := "postgres://user:pa?ss=word@host/db"
+
+		got := addConnectionParams(conn)
+
+		// No query existed, so one has to be opened with "?" after the dbname.
+		require.Equal(t, conn+"?connect_timeout=10&keepalives=1"+
+			"&keepalives_idle=30&keepalives_interval=10&keepalives_count=5", got)
+	})
+
+	t.Run("credentials and a real query", func(t *testing.T) {
+		conn := "postgres://user:pa?ss@host/db?sslmode=require"
+
+		got := addConnectionParams(conn)
+
+		require.True(t, strings.HasPrefix(got, conn+"&"), "got %q", got)
+		require.Contains(t, got, "connect_timeout=10")
+	})
+
+	t.Run("at sign after the query is not credentials", func(t *testing.T) {
+		conn := "postgres://host/db?application_name=a@b"
+
+		got := addConnectionParams(conn)
+
+		require.True(t, strings.HasPrefix(got, conn+"&"), "got %q", got)
+	})
+}
+
+// TestAddConnectionParamsLeavesTerminalEmptyDSNValueAlone covers a DSN ending in
+// an empty value.
+//
+// libpq skips the whitespace after "=" as leading whitespace for that same
+// value, so appending to "host=db password=" makes the password
+// "connect_timeout=10" and the parameter is never seen as one. Authentication
+// would start failing on a connection string that worked before.
+func TestAddConnectionParamsLeavesTerminalEmptyDSNValueAlone(t *testing.T) {
+	for _, conn := range []string{
+		"host=db password=",
+		"host=db password=   ",
+	} {
+		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
+	}
+}
+
+// TestAddConnectionParamsRejectsEmptyQueryParameter checks that a query libpq
+// would reject for an empty parameter is handed over untouched.
+func TestAddConnectionParamsRejectsEmptyQueryParameter(t *testing.T) {
+	for _, conn := range []string{
+		"postgres://host/db?&sslmode=require",
+		"postgres://host/db?sslmode=require&&application_name=x",
+	} {
+		require.Equal(t, conn, addConnectionParams(conn), "conn=%q", conn)
+	}
+}

@@ -112,7 +112,12 @@ func addConnectionParams(connString string) string {
 // remainder to the last injected value, turning "keepalives_count=5" into
 // "keepalives_count=5#archive", which psql rejects as an invalid integer.
 func addURIParams(connString string) string {
-	base, query, _ := strings.Cut(connString, "?")
+	queryStart := uriQueryStart(connString)
+
+	query := ""
+	if queryStart >= 0 {
+		query = connString[queryStart+1:]
+	}
 
 	existing, ok := uriQueryKeys(query)
 	if !ok {
@@ -126,11 +131,51 @@ func addURIParams(connString string) string {
 	if len(additions) == 0 {
 		return connString
 	}
+	joined := strings.Join(additions, "&")
 
-	if query != "" {
-		return base + "?" + query + "&" + strings.Join(additions, "&")
+	// Always appended to the original string, so nothing before this point can
+	// be rewritten by accident.
+	switch {
+	case queryStart < 0:
+		return connString + "?" + joined
+
+	// Already ends in "?" or "&", so it carries its own separator. Adding
+	// another would leave an empty parameter, which libpq rejects outright with
+	// "missing key/value separator".
+	case query == "" || strings.HasSuffix(query, "&"):
+		return connString + joined
+
+	default:
+		return connString + "&" + joined
 	}
-	return base + "?" + strings.Join(additions, "&")
+}
+
+// uriQueryStart returns the index of the "?" that begins the query, or -1 when
+// there is none.
+//
+// It cannot simply be the first "?". libpq looks ahead for user credentials,
+// stopping at the first "@" or "/", and only then scans for the query — so the
+// credentials may contain a "?" of their own, as in
+// "postgres://user:pa?ss@host/db". Treating that one as the delimiter would
+// append the parameters into the database name instead of the query.
+func uriQueryStart(connString string) int {
+	_, rest, found := strings.Cut(connString, "://")
+	if !found {
+		return -1
+	}
+	offset := len(connString) - len(rest)
+
+	// Credentials are present only if an "@" comes before any "/".
+	if end := strings.IndexAny(rest, "@/"); end >= 0 && rest[end] == '@' {
+		offset += end + 1
+		rest = rest[end+1:]
+	}
+
+	q := strings.IndexByte(rest, '?')
+	if q < 0 {
+		return -1
+	}
+	return offset + q
 }
 
 // uriQueryKeys returns the parameter names set in a URI query, reporting false
@@ -147,9 +192,15 @@ func uriQueryKeys(query string) (map[string]bool, bool) {
 		return keys, true
 	}
 
-	for _, pair := range strings.Split(query, "&") {
+	segments := strings.Split(query, "&")
+	for i, pair := range segments {
 		if pair == "" {
-			continue
+			// A single trailing "&" is accepted by libpq; an empty parameter
+			// anywhere else is not.
+			if i == len(segments)-1 {
+				continue
+			}
+			return nil, false
 		}
 
 		raw, _, found := strings.Cut(pair, "=")
@@ -244,7 +295,15 @@ func dsnKeys(connString string) (map[string]bool, bool) {
 // It reports false when the value cannot be safely extended, which covers an
 // unterminated quote and a value ending in a dangling backslash.
 func skipDSNValue(runes []rune, i *int) bool {
-	if *i < len(runes) && runes[*i] == '\'' {
+	// An empty value at the very end cannot be extended. libpq treats the
+	// whitespace after "=" as leading whitespace for that same value, so in
+	// "password=" an appended " connect_timeout=10" becomes the password
+	// itself, and the parameter is never seen as one.
+	if *i >= len(runes) {
+		return false
+	}
+
+	if runes[*i] == '\'' {
 		*i++
 		for *i < len(runes) {
 			switch runes[*i] {
