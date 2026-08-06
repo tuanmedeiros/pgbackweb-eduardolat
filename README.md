@@ -138,7 +138,9 @@ You only need to configure the following environment variables:
 
 - `TZ`: Optional. Your [timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List). Default is `UTC`. This impacts logging, backup filenames and default timezone in the web interface.
 
-The following timeouts stop a stuck operation from holding resources forever. Each one bounds a **lack of progress**, never the total duration of a backup, so a slow but advancing backup is never interrupted no matter how long it takes. Raise them only if something in your setup legitimately pauses for longer. All accept Go duration strings such as `90s`, `5m` or `2h`.
+The following timeouts stop a stuck operation from holding resources forever. Each one bounds a **lack of progress**, never the total duration of a backup, so a slow but advancing backup is never interrupted no matter how long it takes. Raise them only if something in your setup legitimately pauses for longer. All take a duration with a unit suffix — `s`, `m` or `h`. A bare number is
+rejected at startup, so write `1800s` or `30m`, not `1800`. Leaving a variable
+empty or unset uses its default.
 
 - `PBW_DATABASE_TEST_TIMEOUT`: Optional. How long the connectivity check against each database may take before that database is marked unhealthy. Default `60s`.
 
