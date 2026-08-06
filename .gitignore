@@ -16,6 +16,9 @@ tmp/
 temp/
 .task/
 
+# Local tooling configuration
+.mcp.json
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
