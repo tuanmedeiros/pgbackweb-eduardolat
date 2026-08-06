@@ -6,7 +6,7 @@ name: Build & Publish Fork Image
 # Two tags are pushed for every build:
 #
 #   <tag>            the one to put in a compose file
-#   <tag>-<sha>      immutable, so a rollback can name the exact commit
+#   <tag>-<sha>      names the commit, so a rollback can point at one
 #
 # "latest" is deliberately never touched: on a fork it is an invitation to
 # deploy something unvalidated by accident.
@@ -27,9 +27,112 @@ on:
         description: Docker Hub repository to push to
         required: true
         default: tuanmedeiros/pgbackweb
+      overwrite:
+        description: >
+          Replace the <tag>-<sha> images if they already exist. Off by default,
+          because rebuilding a commit does not rebuild the same image.
+        type: boolean
+        default: false
+
+# Nothing here needs the token for anything but cloning.
+permissions:
+  contents: read
+
+# Two dispatches carrying the same tag would race each other in the registry.
+concurrency:
+  group: publish-fork-image-${{ inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
+  resolve:
+    name: Validate and pin
+    runs-on: ubuntu-24.04
+
+    outputs:
+      sha: ${{ steps.pin.outputs.sha }}
+      short: ${{ steps.pin.outputs.short }}
+
+    steps:
+      # These inputs end up in shell commands and in image references on a
+      # runner that holds a registry token. Rejecting anything that is not a
+      # version or a repository name keeps shell syntax from getting there, and
+      # keeps a stray space from turning into a baffling `docker build` failure.
+      - name: Validate the inputs
+        env:
+          TAG: ${{ inputs.tag }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! $TAG =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag must be <upstream-version>-<fork-version>, e.g. 0.5.1-0.1.0 (got '$TAG')"
+            exit 1
+          fi
+
+          if [[ ! $IMAGE =~ ^[a-z0-9]+([._-][a-z0-9]+)*/[a-z0-9]+([._-][a-z0-9]+)*$ ]]; then
+            echo "::error::image must be a Docker Hub repository, e.g. tuanmedeiros/pgbackweb (got '$IMAGE')"
+            exit 1
+          fi
+
+      - name: Checkout the requested ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          # A full clone makes the short SHA below match what `git rev-parse`
+          # gives locally: git picks the abbreviation length from how many
+          # objects it can see.
+          fetch-depth: 0
+          # Nothing here talks to the remote again, so there is no reason to
+          # leave the token sitting in .git/config.
+          persist-credentials: false
+
+      # Every job downstream checks out this SHA instead of resolving the input
+      # again. Resolving a branch three times can give three different commits
+      # if someone pushes while runners are queued -- the architecture jobs
+      # would push mismatched SHA tags, and the plain manifest would happily
+      # combine two architectures built from different commits.
+      - name: Pin the commit
+        id: pin
+        run: |
+          set -euo pipefail
+
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "short=$(git rev-parse --short HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
+
+      # The <tag>-<sha> images name a commit, which reads as though they name a
+      # build. They do not: docker/Dockerfile tracks moving base images,
+      # unpinned apt packages, and n@latest, so building this commit again can
+      # hand you different PostgreSQL client patch versions than the ones now
+      # deployed. Replacing one is therefore a silent change to something
+      # already running, and the tag people roll back to is the worst place for
+      # that. Dispatch with overwrite=true when replacing it is the intent.
+      - name: Refuse to replace an existing build
+        if: ${{ !inputs.overwrite }}
+        env:
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ steps.pin.outputs.short }}
+        run: |
+          set -euo pipefail
+
+          for name in "$TAG-$SHA" "$TAG-$SHA-amd64" "$TAG-$SHA-arm64"; do
+            if docker manifest inspect "$IMAGE:$name" >/dev/null 2>&1; then
+              echo "::error::$IMAGE:$name already exists. Rebuilding this commit would replace it with a differently built image; dispatch with overwrite=true to do that on purpose."
+              exit 1
+            fi
+          done
+
   build-and-push-images:
+    needs: resolve
+
     strategy:
       matrix:
         vars:
@@ -44,22 +147,27 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout code
+      # No history needed: set-version.sh stamps the version into the source,
+      # so the build itself never asks git anything.
+      #
+      # persist-credentials matters more here than it looks. There is no
+      # .dockerignore, docker/Dockerfile does `COPY . .`, and that includes
+      # .git -- so the default would bake a git credential into an image
+      # published to a public registry.
+      - name: Checkout the pinned commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.commit }}
-          # set-version.sh needs no history, but a full clone makes the short
-          # SHA below match what `git rev-parse` gives locally.
-          fetch-depth: 0
-
-      - name: Resolve short SHA
-        id: sha
-        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       - name: Stamp the version
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
+
           chmod +x ./scripts/set-version.sh
-          ./scripts/set-version.sh v${{ github.event.inputs.tag }}
+          ./scripts/set-version.sh "v$TAG"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -68,34 +176,40 @@ jobs:
           password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
 
       - name: Build the image
-        run: >
-          docker build
-          --tag ${{ github.event.inputs.image }}:${{ github.event.inputs.tag }}-${{ matrix.vars.platform }}
-          --tag ${{ github.event.inputs.image }}:${{ github.event.inputs.tag }}-${{ steps.sha.outputs.short }}-${{ matrix.vars.platform }}
-          --build-arg TARGETPLATFORM=linux/${{ matrix.vars.platform }}
-          --file docker/Dockerfile .
+        env:
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ needs.resolve.outputs.short }}
+          PLATFORM: ${{ matrix.vars.platform }}
+        run: |
+          set -euo pipefail
+
+          docker build \
+            --tag "$IMAGE:$TAG-$PLATFORM" \
+            --tag "$IMAGE:$TAG-$SHA-$PLATFORM" \
+            --build-arg "TARGETPLATFORM=linux/$PLATFORM" \
+            --file docker/Dockerfile .
 
       - name: Push the image
+        env:
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ needs.resolve.outputs.short }}
+          PLATFORM: ${{ matrix.vars.platform }}
         run: |
-          docker push ${{ github.event.inputs.image }}:${{ github.event.inputs.tag }}-${{ matrix.vars.platform }}
-          docker push ${{ github.event.inputs.image }}:${{ github.event.inputs.tag }}-${{ steps.sha.outputs.short }}-${{ matrix.vars.platform }}
+          set -euo pipefail
+
+          docker push "$IMAGE:$TAG-$PLATFORM"
+          docker push "$IMAGE:$TAG-$SHA-$PLATFORM"
 
   merge-and-push-manifest:
     name: Merge manifests
-    needs: build-and-push-images
+    needs: [resolve, build-and-push-images]
     runs-on: ubuntu-24.04
 
+    # No checkout: the commit was pinned upstream, so there is nothing here
+    # that needs the repository.
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.commit }}
-          fetch-depth: 0
-
-      - name: Resolve short SHA
-        id: sha
-        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -104,15 +218,19 @@ jobs:
 
       # A manifest lets one tag serve both architectures, so the VPS pulls the
       # right one without knowing which it needs.
+      #
+      # The SHA-qualified manifest goes first on purpose: if an architecture is
+      # missing, this fails before the plain tag -- the one a compose file
+      # points at -- has been touched.
       - name: Merge and push manifests
         env:
-          IMAGE: ${{ github.event.inputs.image }}
-          TAG: ${{ github.event.inputs.tag }}
-          SHA: ${{ steps.sha.outputs.short }}
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ needs.resolve.outputs.short }}
         run: |
           set -euo pipefail
 
-          for name in "$TAG" "$TAG-$SHA"; do
+          for name in "$TAG-$SHA" "$TAG"; do
             docker manifest create "$IMAGE:$name" \
               "$IMAGE:$name-amd64" \
               "$IMAGE:$name-arm64"
@@ -123,9 +241,10 @@ jobs:
 
       - name: Summary
         env:
-          IMAGE: ${{ github.event.inputs.image }}
-          TAG: ${{ github.event.inputs.tag }}
-          SHA: ${{ steps.sha.outputs.short }}
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ needs.resolve.outputs.short }}
+          COMMIT: ${{ inputs.commit }}
         run: |
           {
             echo "### Published"
@@ -133,9 +252,9 @@ jobs:
             echo '| Tag | Use |'
             echo '| --- | --- |'
             echo "| \`$IMAGE:$TAG\` | put this in the compose file |"
-            echo "| \`$IMAGE:$TAG-$SHA\` | immutable, name it to roll back |"
+            echo "| \`$IMAGE:$TAG-$SHA\` | names the commit, roll back to it |"
             echo
-            echo "Built from \`${{ github.event.inputs.commit }}\` at \`$SHA\`."
+            echo "Built from \`$COMMIT\` at \`$SHA\`."
             echo
             echo 'Not tagged `latest` — see UPSTREAM.md.'
           } >> "$GITHUB_STEP_SUMMARY"
