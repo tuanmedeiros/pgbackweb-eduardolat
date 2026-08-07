@@ -27,10 +27,14 @@ dist/
 
 # Not part of the application. Only internal/view/static is embedded into the
 # binary; docs/ deploys separately, and assets/ is imagery for the README.
+#
+# .devcontainer/ is deliberately NOT here: docker/Dockerfile.dev line 100 does
+# `COPY .devcontainer/.bashrc /root/.bashrc`, and that is the image CI builds to
+# run lint, test and build in. Excluding it costs a few kilobytes in the
+# production image and breaks every CI run.
 docs/
 assets/
 .github/
-.devcontainer/
 .vscode/
 .idea/
 

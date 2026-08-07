@@ -85,12 +85,25 @@ PG Back Web isn't just another backup tool. It's your trusted ally in ensuring t
 
 PG Back Web is available as a Docker image. You just need to set 3 environment variables and you're good to go!
 
+> **This is a fork.** The image below is built from this repository, which carries
+> fixes that are not upstream yet — see [`UPSTREAM.md`](./UPSTREAM.md) for what
+> diverges and why. For the original, use `eduardolat/pgbackweb`.
+>
+> The tag is pinned on purpose: `latest` is never published here, so a restart does
+> not quietly pick up code nobody chose to deploy.
+>
+> Tags are still only names, though. Any of them can be repointed by anyone holding
+> a push credential, and the `<version>-<commit>` tag is no exception — it tells you
+> **which** commit an image was built from, but it does not prove **what** the image
+> contains. The digest does, and [`UPSTREAM.md`](./UPSTREAM.md) records one per
+> release. For a reference that cannot move, use it: `image: repo:tag@sha256:...`.
+
 Here's an example of how you can run PG Back Web with Docker Compose, feel free to adapt it to your needs:
 
 ```yaml
 services:
   pgbackweb:
-    image: eduardolat/pgbackweb:latest
+    image: tuanmedeiros/pgbackweb:0.5.1-0.1.0
     ports:
       - "8085:8085" # Access the web interface at http://localhost:8085
     volumes:
