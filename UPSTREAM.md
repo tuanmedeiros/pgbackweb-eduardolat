@@ -72,8 +72,21 @@ auto-updater comparing versions would "upgrade" back to upstream and silently dr
 these fixes.
 
 The digest is recorded because it is the only one of the three that cannot be
-reused for different content. Verifying a running container means comparing it —
-`docker inspect <container> --format '{{.Config.Image}}'` against the table above.
+reused for different content. To check what a running container actually is:
+
+```sh
+docker inspect <container> --format '{{.Image}}' \
+  | xargs docker image inspect --format '{{index .RepoDigests 0}}'
+```
+
+That prints `tuanmedeiros/pgbackweb@sha256:...`, which should match the table
+above. It works however the container was started.
+
+`docker inspect <container> --format '{{.Config.Image}}'` is shorter and also
+carries the digest — but only under Swarm, which resolves the tag and records
+`image:tag@sha256:...` in the service spec when it deploys. Started from a plain
+Compose file the same command returns the bare tag, and there is nothing to
+compare.
 
 ## State of upstream
 
