@@ -56,9 +56,9 @@ worse than the problem being fixed.
 
 ## Published images
 
-| Fork version | Upstream base | Commit | Image digest |
-|---|---|---|---|
-| `v0.5.1-0.1.0` | `v0.5.1` | `e88cc77` | `sha256:5b5f9003278ae509f78f7d5a3b8e5e136a24c864e5b56242056b1f21da9b364c` |
+| Fork version   | Upstream base | Commit    | Image digest                                                              |
+| -------------- | ------------- | --------- | ------------------------------------------------------------------------- |
+| `v0.5.1-0.1.0` | `v0.5.1`      | `e88cc77` | `sha256:5b5f9003278ae509f78f7d5a3b8e5e136a24c864e5b56242056b1f21da9b364c` |
 
 Two tags per release, both multi-arch (`linux/amd64` + `linux/arm64`):
 
@@ -67,7 +67,7 @@ Two tags per release, both multi-arch (`linux/amd64` + `linux/arm64`):
 
 `latest` is never published. The version scheme is `<upstream-version>-<fork-version>`;
 note that semver reads anything after a hyphen as a prerelease, so `0.5.1-0.1.0`
-sorts *before* upstream `0.5.1`. Harmless while images are pinned by hand, but an
+sorts _before_ upstream `0.5.1`. Harmless while images are pinned by hand, but an
 auto-updater comparing versions would "upgrade" back to upstream and silently drop
 these fixes.
 
@@ -79,20 +79,20 @@ reused for different content. Verifying a running container means comparing it �
 
 Measured 2026-08-07:
 
-| Signal | Value |
-|---|---|
-| Last merge of actual code | PR #143, 2025-10-07 — ten months |
-| Last commit on `develop` | 2025-11-21 |
-| Open pull requests | 14, the oldest from August 2024 |
-| Issue #165 | opened 2025-12-28, two comments — a bot and another affected user. None from the maintainer |
-| Issue #91 | opened 2025-02-07, zero comments in eighteen months |
+| Signal                    | Value                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| Last merge of actual code | PR #143, 2025-10-07 — ten months                                                            |
+| Last commit on `develop`  | 2025-11-21                                                                                  |
+| Open pull requests        | 14, the oldest from August 2024                                                             |
+| Issue #165                | opened 2025-12-28, two comments — a bot and another affected user. None from the maintainer |
+| Issue #91                 | opened 2025-02-07, zero comments in eighteen months                                         |
 
 The only 2025-11-21 merge was a sponsor line in the README, not code.
 
 There is prior art worth knowing about: **PR #175** (`ambyte`, 2026-06-05) attacks
 `#165` from the same direction — `Dump` returning an `io.ReadCloser` whose `Close`
 cancels the process. It touches the same three files this fork does. It is missing
-the part that *triggers* the close when a destination goes silent rather than
+the part that _triggers_ the close when a destination goes silent rather than
 erroring, which is what `streamutil.StallReader` provides here. Its only review in
 two months came from a bot.
 
@@ -133,7 +133,7 @@ instance, destination a real S3-compatible endpoint.
 
 **Killing the destination does not reproduce the bug.** It sends a connection
 reset, which is a hard error the code already handled — the backup failed ~25s
-later and cleaned up. The bug needs the destination to go *silent*: connection
+later and cleaned up. The bug needs the destination to go _silent_: connection
 open, nobody reading. `docker pause` produces exactly that, and as a bonus the
 container never exits, so an orchestrator does not restart it out from under the
 test.
