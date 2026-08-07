@@ -82,11 +82,17 @@ reused for different content. To check what a running container actually is:
 
 ```sh
 docker inspect <container> --format '{{.Image}}' \
-  | xargs docker image inspect --format '{{index .RepoDigests 0}}'
+  | xargs docker image inspect \
+      --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}no registry digest — built locally, not pulled{{end}}'
 ```
 
-That prints `tuanmedeiros/pgbackweb@sha256:...`, which should match the table
-above. It works however the container was started.
+For an image pulled from the registry that prints
+`tuanmedeiros/pgbackweb@sha256:...`, which should match the table above.
+
+An image built on the machine and never pushed has no `RepoDigests` at all, which
+is why the command says so rather than indexing an empty list and failing with a
+template error. That answer is worth having: an image with no registry digest is
+not one of these releases, whatever its tag says.
 
 `docker inspect <container> --format '{{.Config.Image}}'` is shorter and also
 carries the digest — but only under Swarm, which resolves the tag and records
