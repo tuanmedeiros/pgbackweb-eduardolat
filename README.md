@@ -89,16 +89,14 @@ PG Back Web is available as a Docker image. You just need to set 3 environment v
 > fixes that are not upstream yet — see [`UPSTREAM.md`](./UPSTREAM.md) for what
 > diverges and why. For the original, use `eduardolat/pgbackweb`.
 >
-> The tag is pinned on purpose. `latest` is never published here, which removes the
-> usual way a restart quietly picks up code nobody chose to deploy. A version tag
-> can still be republished — but only by dispatching the build workflow and
-> overriding a check that exists to refuse it, never by accident. Every release also
-> carries a `<version>-<commit>` tag naming the exact commit it was built from,
-> which is what you roll back to.
+> The tag is pinned on purpose: `latest` is never published here, so a restart does
+> not quietly pick up code nobody chose to deploy.
 >
-> If you want a reference that cannot move at all, append the digest recorded in
-> [`UPSTREAM.md`](./UPSTREAM.md) — `image: repo:tag@sha256:...`. Docker then ignores
-> where the tag points and fetches that exact content.
+> Tags are still only names, though. Any of them can be repointed by anyone holding
+> a push credential, and the `<version>-<commit>` tag is no exception — it tells you
+> **which** commit an image was built from, but it does not prove **what** the image
+> contains. The digest does, and [`UPSTREAM.md`](./UPSTREAM.md) records one per
+> release. For a reference that cannot move, use it: `image: repo:tag@sha256:...`.
 
 Here's an example of how you can run PG Back Web with Docker Compose, feel free to adapt it to your needs:
 

@@ -63,7 +63,13 @@ worse than the problem being fixed.
 Two tags per release, both multi-arch (`linux/amd64` + `linux/arm64`):
 
 - `tuanmedeiros/pgbackweb:0.5.1-0.1.0` — the one a compose file points at
-- `tuanmedeiros/pgbackweb:0.5.1-0.1.0-e88cc77` — names the commit, roll back to it
+- `tuanmedeiros/pgbackweb:0.5.1-0.1.0-e88cc77` — records which commit was built
+
+Neither is a guarantee of content. Both are tags, and a tag is a name that anyone
+holding a push credential can repoint — including by pushing straight to the
+registry, which never reaches the guard in `publish-fork-image.yaml`. The
+`<version>-<commit>` form is a label saying which commit produced an image, not
+proof of what that image holds. Roll back by digest when it has to be certain.
 
 `latest` is never published. The version scheme is `<upstream-version>-<fork-version>`;
 note that semver reads anything after a hyphen as a prerelease, so `0.5.1-0.1.0`
