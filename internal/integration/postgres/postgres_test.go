@@ -292,7 +292,13 @@ func TestStalledUploadReleasesPgDump(t *testing.T) {
 func TestTestHonoursDeadline(t *testing.T) {
 	skipWithoutShellTools(t)
 
-	script, pidFile := endlessScript(t)
+	// stalledScript, not endlessScript: Test captures the command's output with
+	// CombinedOutput, which accumulates it in memory with no bound. That is fine
+	// for the real `psql -c "SELECT 1;"`, which prints a few bytes, but a
+	// stand-in streaming as fast as the CPU allows fills gigabytes before the
+	// deadline fires. This one emits a burst and then blocks, which is what the
+	// deadline is here to interrupt.
+	script, pidFile := stalledScript(t)
 	ver := PGVersion{Value: version{Version: "test", PSQL: script}}
 
 	// Long enough that the process reliably starts and reports its pid, short
