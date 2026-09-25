@@ -7,6 +7,7 @@ SET
   is_active = COALESCE(sqlc.narg('is_active'), is_active),
   dest_dir = COALESCE(sqlc.narg('dest_dir'), dest_dir),
   retention_days = COALESCE(sqlc.narg('retention_days'), retention_days),
+  min_copies = COALESCE(sqlc.narg('min_copies'), min_copies),
   opt_data_only = COALESCE(sqlc.narg('opt_data_only'), opt_data_only),
   opt_schema_only = COALESCE(sqlc.narg('opt_schema_only'), opt_schema_only),
   opt_clean = COALESCE(sqlc.narg('opt_clean'), opt_clean),

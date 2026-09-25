@@ -26,8 +26,9 @@ The upstream issues are open with no fix:
 
 ## What diverges
 
-Both changes below are merged into this fork's `main` and shipping in the published
-image. Neither is upstream, and neither has been proposed there yet.
+The changes below are merged into this fork's `main`. The first two ship in the
+published image; the third is not in a released image yet. None is upstream, and
+none has been proposed there yet.
 
 **Orphaned `pg_dump` processes and stalled uploads** — addresses `#165`.
 
@@ -53,6 +54,22 @@ environment fallbacks, percent-encoded names, quoting and escapes, and both the
 URI and keyword/value formats. Review has repeatedly found valid connection
 strings that a careless edit would break, and breaking a working connection is
 worse than the problem being fixed.
+
+**A minimum number of copies that retention keeps** — addresses this fork's
+[#11](https://github.com/tuanmedeiros/pgbackweb-eduardolat/issues/11). Upstream
+asks for the same in [#121](https://github.com/eduardolat/pgbackweb/issues/121),
+where the maintainer said on 2025-05-26 that it would be added, and more broadly in
+[#147](https://github.com/eduardolat/pgbackweb/issues/147).
+
+Retention deleted by age alone. A backup that kept failing for longer than its
+retention period lost every copy, the last good one included, at the moment it was
+needed most. Each backup task now has a `min_copies` setting, 3 by default and
+editable in the backup form: its newest that many successful executions are never
+deleted by retention, however old. Failed executions are still removed by age.
+
+It adds a column, `backups.min_copies`, in migration `20260925000001`. If upstream
+ships its own answer to `#121`, the two schemas will not merge on their own:
+reconcile them before taking upstream's migration instead of carrying both.
 
 ## Published images
 
