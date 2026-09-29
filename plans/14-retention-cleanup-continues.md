@@ -24,6 +24,12 @@ for _, execution := range expiredExecutions {
   `return` dentro do `for`.
 - **Origem:** código do upstream de 21/07/2024 (commits `7e2ceab` e `b98df7b`),
   igual até hoje no `upstream/main`. Não foi introduzido pelo fork.
+- **Relato no upstream:** a issue
+  [#50](https://github.com/eduardolat/pgbackweb/issues/50), aberta em 08/10/2024,
+  descreve os dois sintomas: a limpeza para no arquivo local que sumiu, e a
+  exclusão manual falha. O mantenedor respondeu "let me take a look" em 06/02/2025.
+  Não há correção nem PR, e o loop está igual no `upstream/main` e no
+  `upstream/develop` (conferido em 29/09/2026).
 - **Quando roda:** na subida do app e a cada 10 minutos (`cmd/app/init_schedule.go`).
 - **Efeito:** nenhum dado é perdido. Os buckets das tarefas saudáveis crescem sem
   limite enquanto o item quebrado estiver na frente da lista, e o único sinal é uma
@@ -173,11 +179,11 @@ vem antes do merge. Status: `A fazer` · `Em andamento` · `Feito` · `Bloqueado
 | 4   | Implementação | `LocalDelete` aceita arquivo inexistente (com `Warn`), com teste próprio                                      | Feito   |
 | 5   | Implementação | Logs: `backup_id` em cada falha e resumo `Info`/`Warn` com as contagens                                       | Feito   |
 | 6   | Verificação   | `/ci-local`: lint, test e build na imagem do CI                                                               | Feito   |
-| 7   | Verificação   | E2E com o app real: um destino com chave inválida, um saudável e um backup local sem arquivo, na mesma rodada | A fazer |
-| 8   | Verificação   | Exclusão manual pela interface de um backup local cujo arquivo sumiu                                          | A fazer |
-| 9   | Revisão       | PR aberto como draft, com as decisões na descrição e link para este plano                                     | A fazer |
+| 7   | Verificação   | E2E com o app real: um destino com chave inválida, um saudável e um backup local sem arquivo, na mesma rodada | Feito   |
+| 8   | Verificação   | Exclusão manual pela interface de um backup local cujo arquivo sumiu                                          | Feito   |
+| 9   | Revisão       | PR aberto como draft, com as decisões na descrição e link para este plano                                     | Feito   |
 | 10  | Revisão       | Revisão do Codex (`gpt-5.6-sol`, medium) em ciclos até vir limpa, cada achado registrado em Decisões          | A fazer |
-| 11  | Revisão       | `UPSTREAM.md` registra a nova divergência                                                                     | A fazer |
+| 11  | Revisão       | `UPSTREAM.md` registra a nova divergência                                                                     | Feito   |
 | 12  | Entrega       | Merge na `main` do fork                                                                                       | A fazer |
 | 13  | Entrega       | Release com #11 e #14 (`/release-fork`), com autorização do dono                                              | A fazer |
 
@@ -270,6 +276,53 @@ Verificação completa:
 - `TestGetExpiredExecutions` (do #13) contra um Postgres 16 descartável, migrado com
   `task goose -- up` até `20260925000001`: 7/7 passam. A query não mudou.
 
+### E2E com o app real
+
+Dois binários, ambos construídos com `task build` na imagem do CI: o da `main`
+(`78946bc`, a partir de um `git archive`) e o da branch, que saiu do `/ci-local`. Os
+dois rodaram no container da imagem do CI, com Postgres 16 e MinIO numa rede Docker
+própria (`pbw-mc-*`), e usaram o mesmo banco, o mesmo MinIO e o mesmo volume
+`/backups`. Os dados foram criados pelo próprio app, via HTTP: o banco de origem, dois
+destinos e três tarefas com retenção de 1 dia e `min_copies` 0. Os 9 backups também
+rodaram de verdade, intercalados (A, B, C, A, B, C…), porque a query não tem
+`ORDER BY`. Assim a primeira falha cai no começo da lista, qualquer que seja a ordem
+física.
+
+- **A:** destino com um usuário próprio no MinIO, desativado depois dos backups
+  (`mc admin user disable`). É a chave revogada de verdade, sem mexer no banco.
+- **B:** destino saudável, noutro bucket.
+- **C:** local, com os arquivos apagados à mão.
+
+Depois dos backups, as execuções foram envelhecidas em 10 dias por SQL. Houve ainda
+um backup local recente de C, fora da retenção e com o arquivo também apagado, para
+a tarefa 8. A limpeza roda na subida do app, então cada rodada é um restart. A query
+devolveu a lista começando por uma execução de A.
+
+| Rodada | Binário | Situação             | Log da limpeza                                                                                                                      | Depois                                                        |
+| ------ | ------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| 1      | `main`  | A quebrada           | um `ERROR` (`InvalidAccessKeyId`) na primeira execução de A, e mais nada                                                            | **nada apagado**: B com 3 objetos no bucket, C com 3 vencidas |
+| 2      | `main`  | A quebrada           | o mesmo `ERROR`, no mesmo `id`                                                                                                      | igual: a retenção de B e C está travada                       |
+| 3      | branch  | A quebrada           | um `ERROR` com `execution_id` e `backup_id` de A; três `WARN` de arquivo local ausente; `WARN` final `deleted=6 failed=1 skipped=2` | B: 3 `deleted`, bucket vazio. C: 3 `deleted`. A: 3 intactas   |
+| 4      | branch  | A quebrada           | um `ERROR` de A; `WARN` final `deleted=0 failed=1 skipped=2`                                                                        | uma tentativa por rodada contra o destino quebrado            |
+| 5      | branch  | chave de A reativada | `INFO` `expired executions soft deleted` `deleted=3 failed=0 skipped=0`                                                             | A: 3 `deleted`, bucket vazio                                  |
+
+O resultado cobre os critérios 1 a 4: isolamento na rodada 3, custo limitado na
+rodada 4, arquivo ausente como apagado em C e log com contagens nas rodadas 3 a 5. A
+rodada 5 mostra a volta ao `Info` quando nada falha, e o `TestGetExpiredExecutions`
+cobre o critério 5 (query inalterada). A execução recente de C não foi tocada pela
+limpeza, como esperado.
+
+### Exclusão manual pela interface
+
+Com Playwright, na tela de execuções da tarefa C, a execução recente (`41003a3f`)
+foi apagada pelo modal de detalhes: Delete e depois Confirm.
+
+- **`main`:** toast vermelho com `failed to delete file /backups/task-c/…` e
+  `no such file or directory`. A execução continua `success`, sem `deleted_at`.
+- **Branch:** a página recarrega e a execução aparece como `deleted`, com `deleted_at`
+  preenchido. O log registra o `WARN` `local backup file to delete does not exist`
+  com o caminho.
+
 ## Riscos e fora de escopo
 
 O único risco novo vem de aceitar arquivo local inexistente, e o pior caso dele é
@@ -287,20 +340,23 @@ Fora de escopo deste PR:
 - backoff ou marcação no banco para execuções que falham sempre;
 - execuções órfãs em `running` depois de um redeploy (issue #9);
 - propor a correção ao upstream, que depende de pedido explícito.
+- diretórios de data vazios que sobram depois de apagar arquivos locais, também
+  relatados no #50 do upstream (decisão 7).
 
 ## Registro de decisões
 
 Cinco decisões de desenho foram tomadas no planejamento. Cada achado da revisão do
 Codex entra nesta tabela com veredito e motivo, inclusive os rejeitados.
 
-| #   | Origem        | Decisão                                                              | Veredito                                    | Por quê                                                                                                                                                                                                                                                              |
-| --- | ------------- | -------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Planejamento  | Depois da primeira falha de uma tarefa, pular o resto dela na rodada | adotada                                     | Sem isso, um destino lento seguraria a rodada por horas e atrasaria as outras tarefas, que é o problema original.                                                                                                                                                    |
-| 2   | Planejamento  | Pular por tarefa, não por destino                                    | adotada                                     | A query não devolve `destination_id`, e mudá-la mexeria no SQL do #13 e no tipo gerado.                                                                                                                                                                              |
-| 3   | Planejamento  | `LocalDelete` aceita arquivo inexistente neste mesmo PR              | adotada, confirmada pelo dono em 29/09/2026 | É a falha permanente mais provável, usa o mesmo contrato do S3 e destrava a exclusão manual pela interface.                                                                                                                                                          |
-| 4   | Planejamento  | Loop extraído numa função que recebe a exclusão como parâmetro       | adotada                                     | Deixa o comportamento testável no CI do GitHub sem banco, sem interface nova e sem biblioteca de mock.                                                                                                                                                               |
-| 5   | Planejamento  | Exclusões continuam em sequência                                     | adotada                                     | Paralelizar não limita o custo de um destino quebrado e multiplica as chamadas a ele.                                                                                                                                                                                |
-| 6   | Implementação | Ver o teste falhar contra uma extração pura do loop atual            | adotada                                     | `softDeleteEach` não existe no código atual, e um teste que não compila não prova nada. A extração mantém o `return` e o log de hoje, então a falha mostra o comportamento, não a ausência da função. Não foi commitada: nenhum commit da branch tem teste quebrado. |
+| #   | Origem        | Decisão                                                                              | Veredito                                    | Por quê                                                                                                                                                                                                                                                              |
+| --- | ------------- | ------------------------------------------------------------------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Planejamento  | Depois da primeira falha de uma tarefa, pular o resto dela na rodada                 | adotada                                     | Sem isso, um destino lento seguraria a rodada por horas e atrasaria as outras tarefas, que é o problema original.                                                                                                                                                    |
+| 2   | Planejamento  | Pular por tarefa, não por destino                                                    | adotada                                     | A query não devolve `destination_id`, e mudá-la mexeria no SQL do #13 e no tipo gerado.                                                                                                                                                                              |
+| 3   | Planejamento  | `LocalDelete` aceita arquivo inexistente neste mesmo PR                              | adotada, confirmada pelo dono em 29/09/2026 | É a falha permanente mais provável, usa o mesmo contrato do S3 e destrava a exclusão manual pela interface.                                                                                                                                                          |
+| 4   | Planejamento  | Loop extraído numa função que recebe a exclusão como parâmetro                       | adotada                                     | Deixa o comportamento testável no CI do GitHub sem banco, sem interface nova e sem biblioteca de mock.                                                                                                                                                               |
+| 5   | Planejamento  | Exclusões continuam em sequência                                                     | adotada                                     | Paralelizar não limita o custo de um destino quebrado e multiplica as chamadas a ele.                                                                                                                                                                                |
+| 6   | Implementação | Ver o teste falhar contra uma extração pura do loop atual                            | adotada                                     | `softDeleteEach` não existe no código atual, e um teste que não compila não prova nada. A extração mantém o `return` e o log de hoje, então a falha mostra o comportamento, não a ausência da função. Não foi commitada: nenhum commit da branch tem teste quebrado. |
+| 7   | Implementação | Não apagar os diretórios de data vazios que sobram depois de apagar um arquivo local | fora de escopo                              | Relatado no #50 do upstream junto com este bug, mas é outro comportamento: não trava a retenção nem ocupa espaço relevante. Apagar diretórios exige cuidado com corrida contra um backup gravando no mesmo diretório. Bom candidato a issue separada.                |
 
 Revisão do Codex (`gpt-5.6-sol`, medium): nenhuma rodada ainda.
 
@@ -310,6 +366,10 @@ Novos eventos entram no topo.
 
 | Data       | Evento                                                                                                                                                                                      |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 29/09/2026 | Tarefa 11 feita: `UPSTREAM.md` registra a divergência. Achado: o bug já é relatado no upstream, na issue #50 (2024-10-08), sem correção.                                                    |
+| 29/09/2026 | Tarefa 8 feita: pela interface, a exclusão de uma execução local sem arquivo dá erro na `main` e funciona na branch.                                                                        |
+| 29/09/2026 | Tarefa 7 feita: E2E com o app real (Postgres 16, MinIO). Na `main` nada é apagado, e duas rodadas travam no mesmo item; na branch B e C são limpas e A custa uma tentativa por rodada.      |
+| 29/09/2026 | Tarefa 9 feita: PR [#15](https://github.com/tuanmedeiros/pgbackweb-eduardolat/pull/15) aberto como draft, com link para este plano e as decisões na descrição.                              |
 | 29/09/2026 | Tarefa 6 feita: `/ci-local` verde em lint, test e build; `TestGetExpiredExecutions` 7/7 contra Postgres 16.                                                                                 |
 | 29/09/2026 | Tarefas 3, 4 e 5 feitas: `softDeleteEach` pula o resto da tarefa que falhou, `LocalDelete` aceita arquivo inexistente, logs com `backup_id` e contagens. Os 9 casos passam na imagem do CI. |
 | 29/09/2026 | Tarefa 2 feita: `TestSoftDeleteEach` (6 casos) e `TestLocalDelete` (3 casos) escritos antes da correção; 5 casos falham no comportamento atual (ver Resultados).                            |

@@ -27,8 +27,8 @@ The upstream issues are open with no fix:
 ## What diverges
 
 The changes below are merged into this fork's `main`. The first two ship in the
-published image; the third is not in a released image yet. None is upstream, and
-none has been proposed there yet.
+published image; the last two are not in a released image yet. None is upstream,
+and none has been proposed there yet.
 
 **Orphaned `pg_dump` processes and stalled uploads** — addresses `#165`.
 
@@ -70,6 +70,27 @@ deleted by retention, however old. Failed executions are still removed by age.
 It adds a column, `backups.min_copies`, in migration `20260925000001`. If upstream
 ships its own answer to `#121`, the two schemas will not merge on their own:
 reconcile them before taking upstream's migration instead of carrying both.
+
+**Retention cleanup that carries on past a failure** — addresses this fork's
+[#14](https://github.com/tuanmedeiros/pgbackweb-eduardolat/issues/14). Upstream
+users report the same in [#50](https://github.com/eduardolat/pgbackweb/issues/50),
+open since 2024-10-08. The maintainer said "let me take a look" on 2025-02-06, and
+there is still no fix and no pull request.
+
+The cleanup job gave up on the whole list at the first execution it could not
+delete, so one broken destination, or one local backup whose file was gone, stopped
+retention for every backup task. It now carries on, and skips the rest of a task
+that failed until the next run, 10 minutes later. Each failure is logged with
+`execution_id` and `backup_id`, and the run ends with the `deleted`, `failed` and
+`skipped` counts. `LocalDelete` now treats a file that does not exist as deleted,
+the way S3 treats a missing key, so such an execution can also be deleted by hand
+in the dashboard again.
+
+The loop comes from upstream (2024-07-21) and is unchanged on `upstream/main` and
+`upstream/develop` as of 2026-09-29. There is no SQL or migration, so the change
+stands on its own and does not depend on `min_copies`. `#50` also reports empty
+date directories left behind after local files are deleted. This fork does not
+change that.
 
 ## Published images
 
