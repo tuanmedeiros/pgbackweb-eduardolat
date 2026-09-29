@@ -2,11 +2,14 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
+	"github.com/eduardolat/pgbackweb/internal/logger"
 	"github.com/eduardolat/pgbackweb/internal/util/strutil"
 )
 
@@ -54,10 +57,22 @@ func (c *Client) LocalUpload(
 
 // LocalDelete Deletes a file using the provided path relative to the local
 // backups directory.
+//
+// A file that does not exist counts as deleted, as a missing key does on S3:
+// otherwise its execution could never be deleted, by retention or by hand. It
+// is logged, because every file missing at once points to a backups volume
+// that is not mounted.
 func (c *Client) LocalDelete(relativeFilePath string) error {
 	fullPath := strutil.CreatePath(true, localBackupsDir, relativeFilePath)
 
 	err := os.Remove(fullPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		logger.Warn(
+			"local backup file to delete does not exist",
+			logger.KV{"path": fullPath},
+		)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("failed to delete file %s: %w", fullPath, err)
 	}
