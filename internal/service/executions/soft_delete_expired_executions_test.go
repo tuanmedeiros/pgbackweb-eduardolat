@@ -3,8 +3,10 @@ package executions
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/eduardolat/pgbackweb/internal/database/dbgen"
@@ -13,11 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests run ExecutionsServiceGetExpiredExecutions against a real
-// PostgreSQL, because what they check is the SQL itself. They need a database
-// migrated with `task goose -- up`, named in PBW_TEST_POSTGRES_CONN_STRING,
-// and are skipped without one. Each case runs in a transaction that is rolled
-// back, so the database is left as it was.
+// TestGetExpiredExecutions runs ExecutionsServiceGetExpiredExecutions against
+// a real PostgreSQL, because what it checks is the SQL itself. It needs a
+// database migrated with `task goose -- up`, named in
+// PBW_TEST_POSTGRES_CONN_STRING, and is skipped without one. Each case runs in
+// a transaction that is rolled back, so the database is left as it was.
 
 type expiryFixture struct {
 	label    string
@@ -236,4 +238,114 @@ func expiredIDs(
 	}
 
 	return ids
+}
+
+// TestSoftDeleteEach needs no database: the deletion is a fake that fails for
+// the chosen executions. Each label names an execution, and its letter is the
+// backup it belongs to, so "a1" and "a2" are two executions of backup "a".
+func TestSoftDeleteEach(t *testing.T) {
+	tests := []struct {
+		name        string
+		executions  []string
+		failing     []string
+		wantCalls   []string
+		wantDeleted int
+		wantFailed  int
+		wantSkipped int
+	}{
+		{
+			name:        "deletes everything when nothing fails",
+			executions:  []string{"a1", "b1", "a2", "c1"},
+			wantCalls:   []string{"a1", "b1", "a2", "c1"},
+			wantDeleted: 4,
+		},
+		{
+			// The issue: a backup that cannot be deleted came first, and no
+			// other backup had anything deleted after it.
+			name:        "a backup that fails does not stop the others",
+			executions:  []string{"a1", "b1", "a2", "c1", "a3"},
+			failing:     []string{"a1"},
+			wantCalls:   []string{"a1", "b1", "c1"},
+			wantDeleted: 2,
+			wantFailed:  1,
+			wantSkipped: 2,
+		},
+		{
+			name:        "executions after a failure are still tried",
+			executions:  []string{"a1", "b1", "c1", "d1"},
+			failing:     []string{"b1"},
+			wantCalls:   []string{"a1", "b1", "c1", "d1"},
+			wantDeleted: 3,
+			wantFailed:  1,
+		},
+		{
+			name:        "a backup that fails later keeps what it already deleted",
+			executions:  []string{"a1", "a2", "b1", "a3"},
+			failing:     []string{"a2"},
+			wantCalls:   []string{"a1", "a2", "b1"},
+			wantDeleted: 2,
+			wantFailed:  1,
+			wantSkipped: 1,
+		},
+		{
+			name:        "each failing backup is tried once",
+			executions:  []string{"a1", "b1", "a2", "b2", "a3"},
+			failing:     []string{"a1", "b1", "a2", "b2", "a3"},
+			wantCalls:   []string{"a1", "b1"},
+			wantFailed:  2,
+			wantSkipped: 3,
+		},
+		{
+			name: "an empty list deletes nothing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls, deleted, failed, skipped := softDeleteLabels(
+				t, tt.executions, tt.failing,
+			)
+			require.Equal(t, tt.wantCalls, calls)
+			require.Equal(t, tt.wantDeleted, deleted, "deleted")
+			require.Equal(t, tt.wantFailed, failed, "failed")
+			require.Equal(t, tt.wantSkipped, skipped, "skipped")
+		})
+	}
+}
+
+// softDeleteLabels runs softDeleteEach over executions named by label, with a
+// deletion that fails for the labels in failing, and returns the labels it was
+// asked to delete, in order.
+func softDeleteLabels(
+	t *testing.T, labels []string, failing []string,
+) (calls []string, deleted, failed, skipped int) {
+	t.Helper()
+
+	backupIDs := map[string]uuid.UUID{}
+	labelOf := map[uuid.UUID]string{}
+	var executions []dbgen.Execution
+	for _, label := range labels {
+		backup := label[:1]
+		if _, ok := backupIDs[backup]; !ok {
+			backupIDs[backup] = uuid.New()
+		}
+		execution := dbgen.Execution{ID: uuid.New(), BackupID: backupIDs[backup]}
+		labelOf[execution.ID] = label
+		executions = append(executions, execution)
+	}
+
+	softDelete := func(_ context.Context, id uuid.UUID) error {
+		label, ok := labelOf[id]
+		require.True(t, ok, "asked to delete an execution that is not in the list")
+		calls = append(calls, label)
+		if slices.Contains(failing, label) {
+			return errors.New("destination unavailable")
+		}
+		return nil
+	}
+
+	deleted, failed, skipped = softDeleteEach(
+		context.Background(), executions, softDelete,
+	)
+	return calls, deleted, failed, skipped
 }
