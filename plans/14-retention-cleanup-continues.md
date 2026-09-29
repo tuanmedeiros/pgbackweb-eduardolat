@@ -182,7 +182,7 @@ vem antes do merge. Status: `A fazer` · `Em andamento` · `Feito` · `Bloqueado
 | 7   | Verificação   | E2E com o app real: um destino com chave inválida, um saudável e um backup local sem arquivo, na mesma rodada | Feito   |
 | 8   | Verificação   | Exclusão manual pela interface de um backup local cujo arquivo sumiu                                          | Feito   |
 | 9   | Revisão       | PR aberto como draft, com as decisões na descrição e link para este plano                                     | Feito   |
-| 10  | Revisão       | Revisão do Codex (`gpt-5.6-sol`, medium) em ciclos até vir limpa, cada achado registrado em Decisões          | A fazer |
+| 10  | Revisão       | Revisão do Codex (`gpt-5.6-sol`, medium) em ciclos até vir limpa, cada achado registrado em Decisões          | Feito   |
 | 11  | Revisão       | `UPSTREAM.md` registra a nova divergência                                                                     | Feito   |
 | 12  | Entrega       | Merge na `main` do fork                                                                                       | A fazer |
 | 13  | Entrega       | Release com #11 e #14 (`/release-fork`), com autorização do dono                                              | A fazer |
@@ -358,7 +358,15 @@ Codex entra nesta tabela com veredito e motivo, inclusive os rejeitados.
 | 6   | Implementação | Ver o teste falhar contra uma extração pura do loop atual                            | adotada                                     | `softDeleteEach` não existe no código atual, e um teste que não compila não prova nada. A extração mantém o `return` e o log de hoje, então a falha mostra o comportamento, não a ausência da função. Não foi commitada: nenhum commit da branch tem teste quebrado. |
 | 7   | Implementação | Não apagar os diretórios de data vazios que sobram depois de apagar um arquivo local | fora de escopo                              | Relatado no #50 do upstream junto com este bug, mas é outro comportamento: não trava a retenção nem ocupa espaço relevante. Apagar diretórios exige cuidado com corrida contra um backup gravando no mesmo diretório. Bom candidato a issue separada.                |
 
-Revisão do Codex (`gpt-5.6-sol`, medium): nenhuma rodada ainda.
+Revisão do Codex (`gpt-5.6-sol`, medium):
+
+| Rodada | Achados                                                         | Veredito | Observação                                                                                                                                                                                                    |
+| ------ | --------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1ª     | nenhum: "No actionable correctness regressions were identified" | —        | O Codex rodou `TestLocalDelete` e `TestSoftDeleteEach`. A suíte de storage completa não rodou no sandbox dele, que não abre listener de teste, mas passa no `/ci-local`. O loop convergiu na primeira rodada. |
+
+Conferido à parte, fora da revisão: duas rodadas da limpeza não se sobrepõem. Os jobs
+de `internal/cron` usam `WithSingletonMode(LimitModeReschedule)`, então uma rodada
+que passe de 10 minutos faz o próximo disparo ser pulado.
 
 ## Histórico de progresso
 
@@ -366,6 +374,7 @@ Novos eventos entram no topo.
 
 | Data       | Evento                                                                                                                                                                                      |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 29/09/2026 | Tarefa 10 feita: revisão do Codex (`gpt-5.6-sol`, medium) limpa na primeira rodada.                                                                                                         |
 | 29/09/2026 | Tarefa 11 feita: `UPSTREAM.md` registra a divergência. Achado: o bug já é relatado no upstream, na issue #50 (2024-10-08), sem correção.                                                    |
 | 29/09/2026 | Tarefa 8 feita: pela interface, a exclusão de uma execução local sem arquivo dá erro na `main` e funciona na branch.                                                                        |
 | 29/09/2026 | Tarefa 7 feita: E2E com o app real (Postgres 16, MinIO). Na `main` nada é apagado, e duas rodadas travam no mesmo item; na branch B e C são limpas e A custa uma tentativa por rodada.      |
