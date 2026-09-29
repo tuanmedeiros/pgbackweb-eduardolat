@@ -184,7 +184,7 @@ vem antes do merge. Status: `A fazer` · `Em andamento` · `Feito` · `Bloqueado
 | 9   | Revisão       | PR aberto como draft, com as decisões na descrição e link para este plano                                     | Feito   |
 | 10  | Revisão       | Revisão do Codex (`gpt-5.6-sol`, medium) em ciclos até vir limpa, cada achado registrado em Decisões          | Feito   |
 | 11  | Revisão       | `UPSTREAM.md` registra a nova divergência                                                                     | Feito   |
-| 12  | Entrega       | Merge na `main` do fork                                                                                       | A fazer |
+| 12  | Entrega       | Merge na `main` do fork                                                                                       | Feito   |
 | 13  | Entrega       | Release com #11 e #14 (`/release-fork`), com autorização do dono                                              | A fazer |
 
 ## Plano de testes
@@ -374,6 +374,7 @@ Novos eventos entram no topo.
 
 | Data       | Evento                                                                                                                                                                                      |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 29/09/2026 | Tarefa 12 feita: dono autorizou o merge do PR #15 na `main` do fork. Próximo passo pedido pelo dono: publicar a correção na issue #50 do upstream, sem informação confidencial.             |
 | 29/09/2026 | Tarefa 10 feita: revisão do Codex (`gpt-5.6-sol`, medium) limpa na primeira rodada.                                                                                                         |
 | 29/09/2026 | Tarefa 11 feita: `UPSTREAM.md` registra a divergência. Achado: o bug já é relatado no upstream, na issue #50 (2024-10-08), sem correção.                                                    |
 | 29/09/2026 | Tarefa 8 feita: pela interface, a exclusão de uma execução local sem arquivo dá erro na `main` e funciona na branch.                                                                        |
