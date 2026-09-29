@@ -72,7 +72,7 @@ ships its own answer to `#121`, the two schemas will not merge on their own:
 reconcile them before taking upstream's migration instead of carrying both.
 
 **Retention cleanup that carries on past a failure** — addresses this fork's
-[#14](https://github.com/tuanmedeiros/pgbackweb-eduardolat/issues/14). Upstream
+[#16](https://github.com/tuanmedeiros/pgbackweb-eduardolat/issues/16). Upstream
 users report the same in [#50](https://github.com/eduardolat/pgbackweb/issues/50),
 open since 2024-10-08. The maintainer said "let me take a look" on 2025-02-06, and
 there is still no fix and no pull request.
@@ -91,6 +91,11 @@ The loop comes from upstream (2024-07-21) and is unchanged on `upstream/main` an
 stands on its own and does not depend on `min_copies`. `#50` also reports empty
 date directories left behind after local files are deleted. This fork does not
 change that.
+
+Offered upstream on 2026-09-29, in a
+[comment on #50](https://github.com/eduardolat/pgbackweb/issues/50#issuecomment-5894790353)
+with the root cause, the fix and how it was tested, asking before opening a pull
+request against `develop`. No reply yet.
 
 ## Published images
 
