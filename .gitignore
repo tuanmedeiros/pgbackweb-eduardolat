@@ -35,3 +35,6 @@ temp/
 # Go workspace file
 go.work
 go.work.sum
+
+# Code review decision logs, one per branch (kept locally, summarized in the PR)
+.code-review-log/

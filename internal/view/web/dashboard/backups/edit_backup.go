@@ -32,6 +32,7 @@ func (h *handlers) editBackupHandler(c echo.Context) error {
 		IsActive       string `form:"is_active" validate:"required,oneof=true false"`
 		DestDir        string `form:"dest_dir" validate:"required"`
 		RetentionDays  int16  `form:"retention_days"`
+		MinCopies      *int16 `form:"min_copies" validate:"required,gte=0"`
 		OptDataOnly    string `form:"opt_data_only" validate:"required,oneof=true false"`
 		OptSchemaOnly  string `form:"opt_schema_only" validate:"required,oneof=true false"`
 		OptClean       string `form:"opt_clean" validate:"required,oneof=true false"`
@@ -55,6 +56,7 @@ func (h *handlers) editBackupHandler(c echo.Context) error {
 			IsActive:       sql.NullBool{Bool: formData.IsActive == "true", Valid: true},
 			DestDir:        sql.NullString{String: formData.DestDir, Valid: true},
 			RetentionDays:  sql.NullInt16{Int16: formData.RetentionDays, Valid: true},
+			MinCopies:      sql.NullInt16{Int16: *formData.MinCopies, Valid: true},
 			OptDataOnly:    sql.NullBool{Bool: formData.OptDataOnly == "true", Valid: true},
 			OptSchemaOnly:  sql.NullBool{Bool: formData.OptSchemaOnly == "true", Valid: true},
 			OptClean:       sql.NullBool{Bool: formData.OptClean == "true", Valid: true},
@@ -157,20 +159,26 @@ func editBackupButton(backup dbgen.BackupsServicePaginateBackupsRow) nodx.Node {
 					},
 				}),
 
-				component.InputControl(component.InputControlParams{
-					Name:               "retention_days",
-					Label:              "Retention days",
-					Placeholder:        "30",
-					Required:           true,
-					Type:               component.InputTypeNumber,
-					Pattern:            "[0-9]+",
-					HelpButtonChildren: retentionDaysHelp(),
-					Children: []nodx.Node{
-						nodx.Min("0"),
-						nodx.Max("36500"),
-						nodx.Value(fmt.Sprintf("%d", backup.RetentionDays)),
-					},
-				}),
+				nodx.Div(
+					nodx.Class("grid grid-cols-2 gap-2"),
+
+					component.InputControl(component.InputControlParams{
+						Name:               "retention_days",
+						Label:              "Retention days",
+						Placeholder:        "30",
+						Required:           true,
+						Type:               component.InputTypeNumber,
+						Pattern:            "[0-9]+",
+						HelpButtonChildren: retentionDaysHelp(),
+						Children: []nodx.Node{
+							nodx.Min("0"),
+							nodx.Max("36500"),
+							nodx.Value(fmt.Sprintf("%d", backup.RetentionDays)),
+						},
+					}),
+
+					minCopiesInputControl(backup.MinCopies),
+				),
 
 				component.SelectControl(component.SelectControlParams{
 					Name:     "is_active",

@@ -32,6 +32,7 @@ func (h *handlers) createBackupHandler(c echo.Context) error {
 		IsActive       string    `form:"is_active" validate:"required,oneof=true false"`
 		DestDir        string    `form:"dest_dir" validate:"required"`
 		RetentionDays  int16     `form:"retention_days"`
+		MinCopies      *int16    `form:"min_copies" validate:"required,gte=0"`
 		OptDataOnly    string    `form:"opt_data_only" validate:"required,oneof=true false"`
 		OptSchemaOnly  string    `form:"opt_schema_only" validate:"required,oneof=true false"`
 		OptClean       string    `form:"opt_clean" validate:"required,oneof=true false"`
@@ -59,6 +60,7 @@ func (h *handlers) createBackupHandler(c echo.Context) error {
 			IsActive:       formData.IsActive == "true",
 			DestDir:        formData.DestDir,
 			RetentionDays:  formData.RetentionDays,
+			MinCopies:      *formData.MinCopies,
 			OptDataOnly:    formData.OptDataOnly == "true",
 			OptSchemaOnly:  formData.OptSchemaOnly == "true",
 			OptClean:       formData.OptClean == "true",
@@ -210,19 +212,25 @@ func createBackupForm(
 			HelpButtonChildren: destinationDirectoryHelp(),
 		}),
 
-		component.InputControl(component.InputControlParams{
-			Name:               "retention_days",
-			Label:              "Retention days",
-			Placeholder:        "30",
-			Required:           true,
-			Type:               component.InputTypeNumber,
-			Pattern:            "[0-9]+",
-			HelpButtonChildren: retentionDaysHelp(),
-			Children: []nodx.Node{
-				nodx.Min("0"),
-				nodx.Max("36500"),
-			},
-		}),
+		nodx.Div(
+			nodx.Class("grid grid-cols-2 gap-2"),
+
+			component.InputControl(component.InputControlParams{
+				Name:               "retention_days",
+				Label:              "Retention days",
+				Placeholder:        "30",
+				Required:           true,
+				Type:               component.InputTypeNumber,
+				Pattern:            "[0-9]+",
+				HelpButtonChildren: retentionDaysHelp(),
+				Children: []nodx.Node{
+					nodx.Min("0"),
+					nodx.Max("36500"),
+				},
+			}),
+
+			minCopiesInputControl(defaultMinCopies),
+		),
 
 		component.SelectControl(component.SelectControlParams{
 			Name:     "is_active",

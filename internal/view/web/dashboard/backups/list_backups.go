@@ -109,7 +109,17 @@ func listBackups(
 				),
 				nodx.If(
 					backup.RetentionDays > 0,
-					component.SpanText(fmt.Sprintf("%d days", backup.RetentionDays)),
+					nodx.Div(
+						nodx.Class("flex flex-col items-start"),
+						component.SpanText(fmt.Sprintf("%d days", backup.RetentionDays)),
+						nodx.If(
+							backup.MinCopies > 0,
+							nodx.SpanEl(
+								nodx.Class("text-xs opacity-70"),
+								nodx.Text(fmt.Sprintf("keeps last %d", backup.MinCopies)),
+							),
+						),
+					),
 				),
 			),
 			nodx.Td(yesNoSpan(backup.OptDataOnly)),

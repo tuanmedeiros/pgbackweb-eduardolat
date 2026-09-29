@@ -1,6 +1,7 @@
 package backups
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/eduardolat/pgbackweb/internal/view/web/component"
@@ -147,7 +148,64 @@ func retentionDaysHelp() []nodx.Node {
 			`),
 
 			component.PText(`
+				The most recent successful backups are kept even after this period,
+				as many as "Minimum backups to keep" says.
+			`),
+
+			component.PText(`
 				If you set the retention days to 0, the backups will never be deleted.
+			`),
+		),
+	}
+}
+
+// defaultMinCopies prefills the form for a new backup task. It matches the
+// column default, which is what backups created before the field existed got.
+const defaultMinCopies int16 = 3
+
+func minCopiesInputControl(value int16) nodx.Node {
+	return component.InputControl(component.InputControlParams{
+		Name:               "min_copies",
+		Label:              "Minimum backups to keep",
+		Placeholder:        fmt.Sprintf("%d", defaultMinCopies),
+		Required:           true,
+		Type:               component.InputTypeNumber,
+		Pattern:            "[0-9]+",
+		HelpButtonChildren: minCopiesHelp(),
+		Children: []nodx.Node{
+			nodx.Min("0"),
+			nodx.Max("32767"),
+			nodx.Value(fmt.Sprintf("%d", value)),
+		},
+	})
+}
+
+func minCopiesHelp() []nodx.Node {
+	return []nodx.Node{
+		nodx.Div(
+			nodx.Class("space-y-2"),
+
+			component.PText(`
+				The number of most recent successful backups that retention never
+				deletes, however old they are. If backups stop succeeding, retention
+				would otherwise keep deleting on schedule until none are left.
+			`),
+
+			component.PText(`
+				Backups newer than the retention period are always kept, so this only
+				matters when fewer successful backups than this are that recent.
+				Failed executions don't count and are still removed by age.
+			`),
+
+			component.PText(`
+				Set it to 0 to delete by age alone. It has no effect when retention
+				days is 0, because then nothing is deleted.
+			`),
+
+			component.PText(`
+				It only limits the automatic cleanup. You can still delete any backup
+				by hand, and files removed directly from the destination are still
+				counted.
 			`),
 		),
 	}
