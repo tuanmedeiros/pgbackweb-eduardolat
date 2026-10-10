@@ -63,9 +63,10 @@ where the maintainer said on 2025-05-26 that it would be added, and more broadly
 
 Retention deleted by age alone. A backup that kept failing for longer than its
 retention period lost every copy, the last good one included, at the moment it was
-needed most. Each backup task now has a `min_copies` setting, 3 by default and
-editable in the backup form: its newest that many successful executions are never
-deleted by retention, however old. Failed executions are still removed by age.
+needed most. Each backup task now has a `min_copies` setting, editable in the backup form: its
+newest that many successful executions are never deleted by retention, however
+old. Failed executions are still removed by age. It defaults to 0, which keeps
+upstream's behaviour until the user opts in, so upgrading changes nothing.
 
 It adds a column, `backups.min_copies`, in migration `20260925000001`. If upstream
 ships its own answer to `#121`, the two schemas will not merge on their own:

@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE backups
-  ADD COLUMN min_copies SMALLINT NOT NULL DEFAULT 3,
+  ADD COLUMN min_copies SMALLINT NOT NULL DEFAULT 0,
   ADD CONSTRAINT backups_min_copies_check CHECK (min_copies >= 0);
 -- +goose StatementEnd
 

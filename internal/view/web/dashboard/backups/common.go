@@ -161,7 +161,7 @@ func retentionDaysHelp() []nodx.Node {
 
 // defaultMinCopies prefills the form for a new backup task. It matches the
 // column default, which is what backups created before the field existed got.
-const defaultMinCopies int16 = 3
+const defaultMinCopies int16 = 0
 
 func minCopiesInputControl(value int16) nodx.Node {
 	return component.InputControl(component.InputControlParams{
