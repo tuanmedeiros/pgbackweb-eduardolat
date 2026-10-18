@@ -41,7 +41,7 @@ Do que a v0.5.2 traz, o fork só não tinha `0ad8744` e `083b70e`. O resto, incl
 | 5   | Teste do handler (1 usuário recusa, 0 usuários cria)              | feito: falha com o handler da v0.5.1        |
 | 6   | `UPSTREAM.md` e `README.md` com `0.5.2-0.4.0` e nota de segurança | feito                                       |
 | 7   | `/ci-local`                                                       | feito: lint, test, build                    |
-| 8   | PR                                                                | aberto                                      |
+| 8   | PR e revisão do Codex (limpa na 2ª rodada)                        | aberto                                      |
 | 9   | Publicar imagem, tag e release                                    | aguardando o dono                           |
 
 ## Cenários de migration
@@ -57,3 +57,13 @@ Do que a v0.5.2 traz, o fork só não tinha `0ad8744` e `083b70e`. O resto, incl
 
 Os bancos de partida foram montados com `goose up` usando as migrations das tags
 `v0.5.1-0.3.0` e `v0.5.2`, e os usuários inseridos direto na tabela.
+
+## Revisão do Codex (`gpt-5.6-sol`, `medium`)
+
+1. **1ª rodada, P2, procede.** Num banco vindo da upstream v0.5.2, o `down` da
+   `20261018000001` apagava o índice que a `20260828054515` criou e que segue
+   registrada como aplicada. O `down` agora só apaga o índice quando a
+   `20260828054515` não está aplicada. Medido com PostgreSQL 16: com o `down` antigo,
+   o banco vindo da v0.5.2 ficava sem índice; com o novo, mantém. Vindo do fork, o
+   índice ainda é apagado. Os cenários (a)–(d) não mudaram.
+2. **2ª rodada:** limpa.
