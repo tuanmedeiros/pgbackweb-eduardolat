@@ -28,7 +28,8 @@ The upstream issues are open with no fix:
 
 The changes below are merged into this fork's `main`. The first two ship since
 `0.5.1-0.1.0`; the next two ship since `0.5.1-0.2.0`; the last one ships since
-`0.5.1-0.3.0`. None is upstream, and none has been proposed there yet.
+`0.5.1-0.3.0`. None is upstream. Only the retention cleanup fix has been offered
+there, on 2026-09-29 in a comment on `#50`; the others have not been proposed yet.
 
 **Orphaned `pg_dump` processes and stalled uploads** — addresses `#165`.
 
