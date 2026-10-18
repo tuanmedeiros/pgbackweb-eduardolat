@@ -24,6 +24,44 @@ The upstream issues are open with no fix:
 - [#91](https://github.com/eduardolat/pgbackweb/issues/91) — a lot of idle
   connections after a fast backup.
 
+## Upstream base and security
+
+Since `0.5.2-0.4.0` the fork is based on upstream `v0.5.2`; before that it was
+`v0.5.1`. Upstream `v0.5.2` was merged whole, and the only part the fork did not
+already have is a security fix:
+
+**In `v0.5.1`, `POST /auth/create-first-user` never checked whether a user already
+existed.** Anyone who could reach an instance could create an account on it and
+read every PostgreSQL connection string and S3 key stored there. Every fork image
+up to `0.5.1-0.3.0` has this hole; upgrade to `0.5.2-0.4.0` or later. Upstream
+fixed it in `0ad8744` (PR [#180](https://github.com/eduardolat/pgbackweb/pull/180)):
+the endpoint refuses once a user exists, logs the attempt and redirects to the
+login page, it is rate limited, a unique index allows a single user, and pages are
+sent with `noindex`.
+
+On start, the migration that adds that index refuses to run when it finds more
+than one user, with a security alert saying how to clean up. The app does not start
+until the extra users are deleted and the stored credentials rotated.
+
+**The fork runs that migration under a different name.** Upstream ships it as
+`20260828054515`, which is older than the fork's own `20260925000001`. goose
+refuses an unapplied migration older than the newest applied one, so under the
+upstream name a database already on the fork fails with "found 1 missing
+migrations" and the app does not start. The fork runs the same migration as
+`20261018000001`, with `CREATE UNIQUE INDEX IF NOT EXISTS`, so it also applies on a
+database coming from upstream `v0.5.2`, where `20260828054515` already created the
+index. Tested with goose against PostgreSQL 16 on 2026-10-18:
+
+| Database before `goose up`    | Result                                          |
+| ----------------------------- | ----------------------------------------------- |
+| new                           | ok, index created                               |
+| fork `0.5.1-0.3.0`, one user  | ok, index created (fails under upstream's name) |
+| upstream `v0.5.2`, one user   | ok, index kept                                  |
+| fork `0.5.1-0.3.0`, two users | fails with the security alert, no index         |
+
+A database from upstream `v0.5.2` keeps the row for `20260828054515` in
+`goose_db_version`; goose ignores it.
+
 ## What diverges
 
 The changes below are merged into this fork's `main`. The first two ship since
@@ -139,8 +177,9 @@ registry, which never reaches the guard in `publish-fork-image.yaml`. The
 proof of what that image holds. Roll back by digest when it has to be certain.
 
 `latest` is never published. The version scheme is `<upstream-version>-<fork-version>`;
-note that semver reads anything after a hyphen as a prerelease, so `0.5.1-0.1.0`
-sorts _before_ upstream `0.5.1`. Harmless while images are pinned by hand, but an
+the fork number keeps counting when the upstream base changes, so `0.5.1-0.3.0` is
+followed by `0.5.2-0.4.0`. Note that semver reads anything after a hyphen as a
+prerelease, so `0.5.2-0.4.0` sorts _before_ upstream `0.5.2`. Harmless while images are pinned by hand, but an
 auto-updater comparing versions would "upgrade" back to upstream and silently drop
 these fixes.
 
