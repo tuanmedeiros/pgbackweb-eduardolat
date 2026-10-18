@@ -103,7 +103,7 @@ Here's an example of how you can run PG Back Web with Docker Compose, feel free 
 ```yaml
 services:
   pgbackweb:
-    image: tuanmedeiros/pgbackweb:0.5.1-0.2.0
+    image: tuanmedeiros/pgbackweb:0.5.1-0.3.0
     ports:
       - "8085:8085" # Access the web interface at http://localhost:8085
     volumes:
