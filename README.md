@@ -89,6 +89,10 @@ PG Back Web is available as a Docker image. You just need to set 3 environment v
 > fixes that are not upstream yet — see [`UPSTREAM.md`](./UPSTREAM.md) for what
 > diverges and why. For the original, use `eduardolat/pgbackweb`.
 >
+> **Security:** fork images up to `0.5.1-0.3.0` let anyone create an account on a
+> running instance through `/auth/create-first-user`, the hole upstream fixed in
+> `v0.5.2`. Use `0.5.2-0.4.0` or later. See [`UPSTREAM.md`](./UPSTREAM.md).
+>
 > The tag is pinned on purpose: `latest` is never published here, so a restart does
 > not quietly pick up code nobody chose to deploy.
 >
@@ -103,7 +107,7 @@ Here's an example of how you can run PG Back Web with Docker Compose, feel free 
 ```yaml
 services:
   pgbackweb:
-    image: tuanmedeiros/pgbackweb:0.5.1-0.3.0
+    image: tuanmedeiros/pgbackweb:0.5.2-0.4.0
     ports:
       - "8085:8085" # Access the web interface at http://localhost:8085
     volumes:
