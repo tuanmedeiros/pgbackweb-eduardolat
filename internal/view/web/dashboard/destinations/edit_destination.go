@@ -110,6 +110,7 @@ func editDestinationButton(
 					Pattern:     "[Hh][Tt][Tt][Pp][Ss]?://.+",
 					HelpText:    endpointHelpText,
 					Children: []nodx.Node{
+						nodx.TitleAttr(endpointHelpText),
 						nodx.Value(destination.Endpoint),
 					},
 				}),

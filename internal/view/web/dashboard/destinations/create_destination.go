@@ -27,6 +27,8 @@ const invalidEndpointMsg = "The endpoint must start with https:// (or http:// " 
 	"for a server without TLS), for example https://s3.us-west-1.amazonaws.com"
 
 // endpointHelpText sits under the endpoint input in the create and edit forms.
+// It is also the input's title, which browsers add to the pattern mismatch
+// message that otherwise only says "Please match the requested format".
 const endpointHelpText = "Include https://, or http:// for a server without TLS"
 
 func (h *handlers) createDestinationHandler(c echo.Context) error {
@@ -104,6 +106,9 @@ func createDestinationButton() nodx.Node {
 					Type:        component.InputTypeText,
 					Pattern:     "[Hh][Tt][Tt][Pp][Ss]?://.+",
 					HelpText:    endpointHelpText,
+					Children: []nodx.Node{
+						nodx.TitleAttr(endpointHelpText),
+					},
 				}),
 
 				component.InputControl(component.InputControlParams{
