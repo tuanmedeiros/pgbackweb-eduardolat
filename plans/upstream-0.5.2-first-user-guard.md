@@ -40,8 +40,8 @@ Do que a v0.5.2 traz, o fork só não tinha `0ad8744` e `083b70e`. O resto, incl
 | 4   | Cenários (a)–(d) com goose e PostgreSQL 16                        | feito, tabela abaixo                        |
 | 5   | Teste do handler (1 usuário recusa, 0 usuários cria)              | feito: falha com o handler da v0.5.1        |
 | 6   | `UPSTREAM.md` e `README.md` com `0.5.2-0.4.0` e nota de segurança | feito                                       |
-| 7   | `/ci-local`                                                       | pendente                                    |
-| 8   | PR                                                                | pendente                                    |
+| 7   | `/ci-local`                                                       | feito: lint, test, build                    |
+| 8   | PR                                                                | aberto                                      |
 | 9   | Publicar imagem, tag e release                                    | aguardando o dono                           |
 
 ## Cenários de migration
