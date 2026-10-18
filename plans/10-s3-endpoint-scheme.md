@@ -70,10 +70,10 @@ se você quiser que os destinos antigos voltem sem edição.
 | 2   | Placeholder `https://s3.us-west-1.amazonaws.com` e `HelpText` nos dois formulários | feito                                   |
 | 3   | Validação do esquema (`validate.S3Endpoint`) em criar, editar e testar             | feito                                   |
 | 4   | Teste que falha sem a validação e passa com ela                                    | feito: 6 casos falham com só `required` |
-| 5   | `/ci-local`                                                                        | pendente                                |
-| 6   | Conferir na UI (criar, editar, testar)                                             | pendente                                |
+| 5   | `/ci-local`                                                                        | feito: lint, test, build                |
+| 6   | Conferir na UI (criar, editar, testar)                                             | feito: criar, editar e testar           |
 | 7   | Revisão do Codex em loop                                                           | pendente                                |
-| 8   | Atualizar `UPSTREAM.md` com a divergência e a proposta upstream                    | pendente                                |
+| 8   | Atualizar `UPSTREAM.md` com a divergência e a proposta upstream                    | feito                                   |
 
 ## Histórico
 
@@ -85,3 +85,8 @@ se você quiser que os destinos antigos voltem sem edição.
   feitas fora do formulário. Destinos já salvos e as execuções não passam por essa
   checagem: um endpoint antigo sem esquema continua falhando como antes até alguém
   editar, e a edição exige corrigir.
+- 18/10/2026 — conferido com o app rodando (Postgres descartável, sem S3 real). Sem
+  esquema, criar, testar e editar devolvem a mensagem nova. Com `https://`, a
+  requisição passa da validação e falha só na conexão. O formulário de edição de um
+  destino antigo mostra o placeholder novo e o valor salvo sem esquema, que o
+  `pattern` impede de salvar sem corrigir.
