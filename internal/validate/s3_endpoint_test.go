@@ -48,6 +48,11 @@ func TestS3Endpoint(t *testing.T) {
 			wantValid: false,
 		},
 		{
+			name:      "port without host",
+			endpoint:  "https://:9000",
+			wantValid: false,
+		},
+		{
 			name:      "other scheme",
 			endpoint:  "ftp://s3.us-west-1.amazonaws.com",
 			wantValid: false,

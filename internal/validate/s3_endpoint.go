@@ -18,5 +18,5 @@ func S3Endpoint(endpoint string) bool {
 		return false
 	}
 
-	return u.Host != ""
+	return u.Hostname() != ""
 }
