@@ -1,3 +1,9 @@
+-- Upstream v0.5.2 ships this as 20260828054515. This fork renames it to run
+-- after its own 20260925000001: goose refuses an unapplied migration older than
+-- the newest applied one, so under the upstream name a database already on the
+-- fork would not start. IF NOT EXISTS lets a database that came from upstream
+-- v0.5.2, where the index already exists, apply it too. See UPSTREAM.md.
+
 -- +goose Up
 -- +goose StatementBegin
 DO $$
@@ -7,7 +13,7 @@ BEGIN
   END IF;
 END $$;
 
-CREATE UNIQUE INDEX users_single_user_invariant_idx ON users ((true));
+CREATE UNIQUE INDEX IF NOT EXISTS users_single_user_invariant_idx ON users ((true));
 -- +goose StatementEnd
 
 -- +goose Down
