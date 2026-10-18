@@ -72,7 +72,7 @@ se você quiser que os destinos antigos voltem sem edição.
 | 4   | Teste que falha sem a validação e passa com ela                                    | feito: 6 casos falham com só `required` |
 | 5   | `/ci-local`                                                                        | feito: lint, test, build                |
 | 6   | Conferir na UI (criar, editar, testar)                                             | feito: criar, editar e testar           |
-| 7   | Revisão do Codex em loop                                                           | pendente                                |
+| 7   | Revisão do Codex em loop                                                           | feito: limpo na 3ª rodada               |
 | 8   | Atualizar `UPSTREAM.md` com a divergência e a proposta upstream                    | feito                                   |
 
 ## Histórico
@@ -90,3 +90,9 @@ se você quiser que os destinos antigos voltem sem edição.
   requisição passa da validação e falha só na conexão. O formulário de edição de um
   destino antigo mostra o placeholder novo e o valor salvo sem esquema, que o
   `pattern` impede de salvar sem corrigir.
+- 18/10/2026 — revisão do Codex (`gpt-5.6-sol`, `medium`). 1ª rodada limpa. Nos
+  prints apareceu que o `pattern` bloqueava no navegador com o balão genérico "Please
+  match the requested format"; o input ganhou `title` com o texto de ajuda, que o
+  navegador acrescenta ao balão. 2ª rodada (P2): `https://:9000` passava porque
+  `u.Host` era `":9000"`; a checagem passou a ser `u.Hostname()`, com um caso de
+  teste que falha na versão antiga. 3ª rodada limpa.
