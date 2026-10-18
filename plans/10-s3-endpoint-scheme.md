@@ -44,11 +44,11 @@ Reproduzido de novo em 18/10/2026 contra um `httptest` local, chamando `S3Test`:
    com uma mensagem que diz o que falta, em vez do erro do SDK depois de 3 tentativas.
 4. Endpoints que já têm esquema continuam funcionando sem mudança.
 
-## Decisão em aberto: recusar no formulário ou completar sozinho
+## Decisão: recusar no formulário
 
-A #10 recomendou completar o `https://` dentro do `createS3Client` (opção A). Este
-plano recomenda **recusar no formulário** (opção B), com o placeholder e a ajuda
-corrigidos (C).
+Escolhida em 18/10/2026: **recusar no formulário** (opção B), com o placeholder e a
+ajuda corrigidos (C). A #10 recomendava completar o `https://` dentro do
+`createS3Client` (opção A); a comparação abaixo fica como registro.
 
 |                                | A — completar no cliente S3                                 | B — recusar no formulário                                         |
 | ------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -64,17 +64,24 @@ se você quiser que os destinos antigos voltem sem edição.
 
 ## Tarefas
 
-| #   | Tarefa                                                                             | Status   |
-| --- | ---------------------------------------------------------------------------------- | -------- |
-| 1   | Confirmar a abordagem (A, B ou A + B)                                              | pendente |
-| 2   | Placeholder `https://s3.us-west-1.amazonaws.com` e `HelpText` nos dois formulários | pendente |
-| 3   | Validação do esquema no `createDestinationDTO`, com mensagem legível               | pendente |
-| 4   | Teste que falha sem a validação e passa com ela                                    | pendente |
-| 5   | `/ci-local`                                                                        | pendente |
-| 6   | Conferir na UI (criar, editar, testar)                                             | pendente |
-| 7   | Revisão do Codex em loop                                                           | pendente |
-| 8   | Atualizar `UPSTREAM.md` com a divergência e a proposta upstream                    | pendente |
+| #   | Tarefa                                                                             | Status                                  |
+| --- | ---------------------------------------------------------------------------------- | --------------------------------------- |
+| 1   | Confirmar a abordagem (A, B ou A + B)                                              | feito: B                                |
+| 2   | Placeholder `https://s3.us-west-1.amazonaws.com` e `HelpText` nos dois formulários | feito                                   |
+| 3   | Validação do esquema (`validate.S3Endpoint`) em criar, editar e testar             | feito                                   |
+| 4   | Teste que falha sem a validação e passa com ela                                    | feito: 6 casos falham com só `required` |
+| 5   | `/ci-local`                                                                        | pendente                                |
+| 6   | Conferir na UI (criar, editar, testar)                                             | pendente                                |
+| 7   | Revisão do Codex em loop                                                           | pendente                                |
+| 8   | Atualizar `UPSTREAM.md` com a divergência e a proposta upstream                    | pendente                                |
 
 ## Histórico
 
 - 18/10/2026 — erro reproduzido de novo, issues do upstream levantadas, plano escrito.
+- 18/10/2026 — opção B escolhida. A validação fica em `internal/validate/s3_endpoint.go`
+  (função pura, como as vizinhas) e é chamada nos três handlers que usam o
+  `createDestinationDTO`. O campo ganhou `pattern` para o navegador avisar antes do
+  envio; o servidor confere de novo porque o `pattern` não protege requisições
+  feitas fora do formulário. Destinos já salvos e as execuções não passam por essa
+  checagem: um endpoint antigo sem esquema continua falhando como antes até alguém
+  editar, e a edição exige corrigir.

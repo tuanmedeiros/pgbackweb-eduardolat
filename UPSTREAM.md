@@ -27,8 +27,8 @@ The upstream issues are open with no fix:
 ## What diverges
 
 The changes below are merged into this fork's `main`. The first two ship since
-`0.5.1-0.1.0`; the last two ship since `0.5.1-0.2.0`. None is upstream,
-and none has been proposed there yet.
+`0.5.1-0.1.0`; the next two ship since `0.5.1-0.2.0`; the last one is not in a
+released image yet. None is upstream, and none has been proposed there yet.
 
 **Orphaned `pg_dump` processes and stalled uploads** — addresses `#165`.
 
@@ -97,6 +97,26 @@ Offered upstream on 2026-09-29, in a
 [comment on #50](https://github.com/eduardolat/pgbackweb/issues/50#issuecomment-5894790353)
 with the root cause, the fix and how it was tested, asking before opening a pull
 request against `develop`. No reply yet.
+
+**S3 endpoints must carry a scheme** — addresses this fork's
+[#10](https://github.com/tuanmedeiros/pgbackweb-eduardolat/issues/10). Upstream
+users hit the same in [#97](https://github.com/eduardolat/pgbackweb/issues/97),
+[#98](https://github.com/eduardolat/pgbackweb/issues/98) and
+[#117](https://github.com/eduardolat/pgbackweb/issues/117); each time the
+maintainer answered "add `https://`" and the placeholder stayed the same.
+
+The endpoint placeholder was `s3-us-west-1.amazonaws.com`, but the S3 client uses
+the endpoint as given, and one without `http://` or `https://` never connects: the
+SDK either cannot parse it or retries three times and reports `unsupported protocol
+scheme ""`. The placeholder is now `https://s3.us-west-1.amazonaws.com`, the field
+says the scheme is required, and creating, editing or testing a destination
+rejects an endpoint without one, with a message saying what is missing.
+
+Only the form changed, through a new `validate.S3Endpoint`; `s3.go` is untouched.
+A destination saved without a scheme keeps failing as before until it is edited.
+Completing `https://` in the S3 client was considered and rejected: the stored
+endpoint would differ from the one used, and an HTTP-only MinIO would fail with a
+different error instead of a clear one.
 
 ## Published images
 
