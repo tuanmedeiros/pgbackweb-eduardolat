@@ -164,11 +164,12 @@ different error instead of a clear one.
 | `v0.5.1-0.1.0` | `v0.5.1`      | `e88cc77` | `sha256:5b5f9003278ae509f78f7d5a3b8e5e136a24c864e5b56242056b1f21da9b364c` |
 | `v0.5.1-0.2.0` | `v0.5.1`      | `8d8fa58` | `sha256:502b3105e6aee45027c67b1ec670d274fe71353628da06b3f8e3e6ef81b6ad44` |
 | `v0.5.1-0.3.0` | `v0.5.1`      | `67e46f0` | `sha256:f544747179846fb1547aba2018eda8e5541058bb764c9ad03359720387168eb2` |
+| `v0.5.2-0.4.0` | `v0.5.2`      | `f08419f` | `sha256:0f7e09e7dba6bb3d036e40a976450ffeea3780efec68673dfba2fba78c1a8594` |
 
 Two tags per release, both multi-arch (`linux/amd64` + `linux/arm64`):
 
-- `tuanmedeiros/pgbackweb:0.5.1-0.3.0` — the one a compose file points at
-- `tuanmedeiros/pgbackweb:0.5.1-0.3.0-67e46f0` — records which commit was built
+- `tuanmedeiros/pgbackweb:0.5.2-0.4.0` — the one a compose file points at
+- `tuanmedeiros/pgbackweb:0.5.2-0.4.0-f08419f` — records which commit was built
 
 Neither is a guarantee of content. Both are tags, and a tag is a name that anyone
 holding a push credential can repoint — including by pushing straight to the
