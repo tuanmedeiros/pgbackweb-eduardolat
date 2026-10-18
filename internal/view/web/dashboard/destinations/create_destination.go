@@ -21,6 +21,16 @@ type createDestinationDTO struct {
 	Endpoint   string `form:"endpoint" validate:"required"`
 }
 
+// invalidEndpointMsg is shown when the endpoint has no http:// or https://. The
+// S3 client uses the endpoint as given, so without a scheme it can never connect.
+const invalidEndpointMsg = "The endpoint must start with https:// (or http:// " +
+	"for a server without TLS), for example https://s3.us-west-1.amazonaws.com"
+
+// endpointHelpText sits under the endpoint input in the create and edit forms.
+// It is also the input's title, which browsers add to the pattern mismatch
+// message that otherwise only says "Please match the requested format".
+const endpointHelpText = "Include https://, or http:// for a server without TLS"
+
 func (h *handlers) createDestinationHandler(c echo.Context) error {
 	ctx := c.Request().Context()
 
@@ -30,6 +40,9 @@ func (h *handlers) createDestinationHandler(c echo.Context) error {
 	}
 	if err := validate.Struct(&formData); err != nil {
 		return respondhtmx.ToastError(c, err.Error())
+	}
+	if !validate.S3Endpoint(formData.Endpoint) {
+		return respondhtmx.ToastError(c, invalidEndpointMsg)
 	}
 
 	_, err := h.servs.DestinationsService.CreateDestination(
@@ -88,9 +101,14 @@ func createDestinationButton() nodx.Node {
 				component.InputControl(component.InputControlParams{
 					Name:        "endpoint",
 					Label:       "Endpoint",
-					Placeholder: "s3-us-west-1.amazonaws.com",
+					Placeholder: "https://s3.us-west-1.amazonaws.com",
 					Required:    true,
 					Type:        component.InputTypeText,
+					Pattern:     "[Hh][Tt][Tt][Pp][Ss]?://.+",
+					HelpText:    endpointHelpText,
+					Children: []nodx.Node{
+						nodx.TitleAttr(endpointHelpText),
+					},
 				}),
 
 				component.InputControl(component.InputControlParams{

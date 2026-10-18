@@ -30,6 +30,9 @@ func (h *handlers) editDestinationHandler(c echo.Context) error {
 	if err := validate.Struct(&formData); err != nil {
 		return respondhtmx.ToastError(c, err.Error())
 	}
+	if !validate.S3Endpoint(formData.Endpoint) {
+		return respondhtmx.ToastError(c, invalidEndpointMsg)
+	}
 
 	_, err = h.servs.DestinationsService.UpdateDestination(
 		ctx, dbgen.DestinationsServiceUpdateDestinationParams{
@@ -101,10 +104,13 @@ func editDestinationButton(
 				component.InputControl(component.InputControlParams{
 					Name:        "endpoint",
 					Label:       "Endpoint",
-					Placeholder: "s3-us-west-1.amazonaws.com",
+					Placeholder: "https://s3.us-west-1.amazonaws.com",
 					Required:    true,
 					Type:        component.InputTypeText,
+					Pattern:     "[Hh][Tt][Tt][Pp][Ss]?://.+",
+					HelpText:    endpointHelpText,
 					Children: []nodx.Node{
+						nodx.TitleAttr(endpointHelpText),
 						nodx.Value(destination.Endpoint),
 					},
 				}),

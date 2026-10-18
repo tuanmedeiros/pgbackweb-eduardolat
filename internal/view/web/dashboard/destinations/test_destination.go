@@ -15,6 +15,9 @@ func (h *handlers) testDestinationHandler(c echo.Context) error {
 	if err := validate.Struct(&formData); err != nil {
 		return respondhtmx.ToastError(c, err.Error())
 	}
+	if !validate.S3Endpoint(formData.Endpoint) {
+		return respondhtmx.ToastError(c, invalidEndpointMsg)
+	}
 
 	err := h.servs.DestinationsService.TestDestination(
 		c.Request().Context(),
