@@ -18,5 +18,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_single_user_invariant_idx ON users ((tru
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX IF EXISTS users_single_user_invariant_idx;
+-- On a database that came from upstream v0.5.2, 20260828054515 created the index
+-- and is still recorded as applied, so the index is not this migration's to drop.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM goose_db_version
+    WHERE version_id = 20260828054515 AND is_applied
+  ) THEN
+    DROP INDEX IF EXISTS users_single_user_invariant_idx;
+  END IF;
+END $$;
 -- +goose StatementEnd
